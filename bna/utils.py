@@ -65,5 +65,5 @@ def average_color(colors: list[Color]) -> Color:
         avg_color[1] += tf_color.g ** 2
         avg_color[2] += tf_color.b ** 2
         c += 1
-    avg_color = (int((avg_color[0]/c)**(1/2)), int((avg_color[1]/c)**(1/2)), int((avg_color[2]/c)**(1/2)))
+    avg_color = (round((avg_color[0]/c)**(1/2)), round((avg_color[1]/c)**(1/2)), round((avg_color[2]/c)**(1/2)))
     return Color.from_rgb(*avg_color)

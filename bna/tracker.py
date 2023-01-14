@@ -261,12 +261,25 @@ class Tracker:
                 self.hashes_notified[tf.hash]['time'] = tf.timeStamp
 
         for ev in to_notify:
+            # Single DEX event
             if type(ev) is Transfer:
                 ev = {'type': 'dex', 'tfs': [ev], 'time': ev.timeStamp}
                 self.log.debug(f"Created DEX event: {ev}")
+            # Multi DEX event
             else:
                 max_time = max(map(lambda tf: tf.timeStamp, ev))
-                ev = {'type': 'dex', 'tfs': ev, 'time': max_time}
+                tfs = sorted(ev, key=lambda tf: tf.meta.get('usd_value', 0),
+                reverse=True)
+                m = self.aggregate_dex_trades(tfs)
+                top_volume = 0
+                for i, tf in enumerate(tfs):
+                    top_volume += tf.meta.get('usd_value', 0)
+                    if top_volume / (m['buy_usd'] + m['sell_usd']) >= self.conf.majority_volume_fraction:
+                        break
+                top_tfs = tfs[:i + 1]
+                truncated = len(tfs) - len(top_tfs)
+                ev = {'type': 'dex', 'tfs': top_tfs, 'time': max_time, 'avg_price': m['avg_price'],
+                      'buy_usd': m['buy_usd'], 'sell_usd': m['sell_usd'], 'truncated': truncated}
                 self.log.debug(f"Created multi DEX event: {ev}")
             self.tracker_event_chan.put_nowait(ev)
 
@@ -290,15 +303,15 @@ class Tracker:
                     have_trades = True
 
                 if datetime.now(tz=timezone.utc) - self.trades_notified_at > timedelta(seconds=60) and have_trades:
-                    await self.check_trade_events()
+                    await self.check_cex_events()
                     have_trades = False
                 elif trades:
                     have_trades = True
             except Exception as e:
                 self.log.error(f'Trade worker exception: "{e}"', exc_info=True)
 
-    async def check_trade_events(self):
-        "Get recent trades and generate events if volume is higher than `recent_trades_threshold`"
+    async def check_cex_events(self):
+        "Get recent trades and generate events if volume is higher than `cex_trades_threshold`"
         now = datetime.now(tz=timezone.utc)
         trades = await self.db.recent_trades(self.trades_notified_at, self.conf.cex_volume_period)
         self.log.debug(f"{[tr.id for tr in trades]}")
@@ -399,25 +412,13 @@ class Tracker:
             market['buy'], market['sell'] = int(market['buy']), int(market['sell'])
 
         # BSC trades aggregation
-        markets[MARKET_BSC]['arb'] = Decimal(0)
-        for tf in tagged[DEX_TAG_BUY] + tagged[DEX_TAG_SELL]:
-            if all([t not in DEX_LP_TAGS for t in tf.tags]):
-                buy = DEX_TAG_BUY in tf.tags
-                markets[MARKET_BSC]['quote_amount'] += Decimal(tf.meta.get('usd_value', 0))
-                markets[MARKET_BSC]['buy_usd' if buy else 'sell_usd'] += tf.meta.get('usd_value', 0)
-                for addr, amount in tf.changes.items():
-                    if self.db.addr_type(addr) == 'pool':
-                        markets[MARKET_BSC]['buy' if buy else 'sell'] += amount * (-1 if buy else 1)
-        bsc_vol = markets[MARKET_BSC]['buy'] + markets[MARKET_BSC]['sell']
-        if bsc_vol != 0:
-            bsc_avg_price = markets[MARKET_BSC]['quote_amount'] / bsc_vol
-        else:
-            bsc_avg_price = 0
-        markets[MARKET_BSC]['avg_price'] = f"${bsc_avg_price:.3f}"
-        markets[MARKET_BSC]['avg_price_usd'] = f"${bsc_avg_price:.3f}"
-        markets[MARKET_BSC]['buy'] = int(markets[MARKET_BSC]['buy'])
-        markets[MARKET_BSC]['sell'] = int(markets[MARKET_BSC]['sell'])
-        markets[MARKET_BSC]['arb'] = int(markets[MARKET_BSC]['arb'])
+        bsc = self.aggregate_dex_trades(tagged[DEX_TAG_BUY] + tagged[DEX_TAG_SELL])
+        # self.log.debug(f"{bsc=}")
+        markets[MARKET_BSC].update(bsc)
+        markets[MARKET_BSC]['avg_price'] = f"${bsc['avg_price']:.3f}"
+        markets[MARKET_BSC]['avg_price_usd'] = f"${bsc['avg_price']:.3f}"
+        markets[MARKET_BSC]['buy'] = int(bsc['buy'])
+        markets[MARKET_BSC]['sell'] = int(bsc['sell'])
         if markets[MARKET_BSC]['buy'] + markets[MARKET_BSC]['sell'] == 0:
             del markets[MARKET_BSC]
 
@@ -511,11 +512,25 @@ class Tracker:
                 value += token_price * token_amount
         return value
 
+    def aggregate_dex_trades(self, tfs: list[Transfer]) -> dict:
+        m = {'buy': Decimal(0), 'sell': Decimal(0), 'buy_usd': 0, 'sell_usd': 0, 'quote_amount': 0}
+        for tf in tfs:
+            if all([t not in DEX_LP_TAGS for t in tf.tags]):
+                is_buy = DEX_TAG_BUY in tf.tags
+                m['quote_amount'] += Decimal(tf.meta.get('usd_value', 0))
+                m['buy_usd' if is_buy else 'sell_usd'] += tf.meta.get('usd_value', 0)
+                for addr, amount in tf.changes.items():
+                    if self.db.addr_type(addr) == 'pool':
+                        m['buy' if is_buy else 'sell'] += amount * (-1 if is_buy else 1)
+        bsc_vol = m['buy'] + m['sell']
+        m['avg_price'] = (m['quote_amount'] / bsc_vol) if bsc_vol != 0 else 0
+        return m
+
     def _reset_state(self):
         self.sents.clear()
         self.sents_notified.clear()
         self.hashes_notified.clear()
-        self.pool_stats.clear()
+        self.pool_stats = {'kill': defaultdict(dict), 'delegate': defaultdict(dict), 'undelegate': defaultdict(dict)}
         self.trades_notified_at = datetime.min.replace(tzinfo=timezone.utc)
 
     async def _emit_transfer_event(self, tx_hash: str, ev_type: str = 'transfer'):

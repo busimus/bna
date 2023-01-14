@@ -21,15 +21,15 @@ from bna.utils import any_in, average_color, shorten
 
 MAX_PUBLISH_ATTEMPTS = 3
 
-DEV_USER = int(os.environ["DEV_USER_ID"])
 
 
 class Bot:
-    def __init__(self, bot: commands.InteractionBot, conf: DiscordBotConfig, db: Database, log: Logger):
+    def __init__(self, bot: commands.InteractionBot, conf: DiscordBotConfig, db: Database, dev_user: int, log: Logger):
         from bna.bsc_listener import BscListener
         self.disbot = bot
         self.conf = conf
         self.db = db
+        self.dev_user = dev_user
         self.tracker: Tracker = None
         self.bsc_listener: BscListener = None
         self.log = log.getChild('DI')
@@ -68,7 +68,7 @@ class Bot:
 
     async def ratelimit(self, msg: disnake.CommandInteraction) -> bool:
         "Log user's time of request, and ratelimit them by sleeping if needed. Returns False if the command should not be executed (like when the bot is stopped), but will still ratelimit."
-        if msg.author.id == DEV_USER:
+        if msg.author.id == self.dev_user:
             return True
         times = self.user_cmd_times[msg.author.id]
         now = time.time()
@@ -115,12 +115,12 @@ class Bot:
             await self.send_notification(msg)
 
     async def send_notification(self, msg: dict):
+        if self.stopped:
+            self.log.warning("Stopped, not sending the notification")
+            return
         channel = self.disbot.get_channel(self.conf.notif_channel)
         if channel is None:
             self.log.warning("No channel, can't send messages yet")
-            return
-        if self.stopped:
-            self.log.warning("Stopped, not sending the notification")
             return
         await channel.send(**msg)
 
@@ -167,7 +167,6 @@ class Bot:
 
     def build_transfer_message(self, ev: dict) -> dict:
         MAX_TOP_TFS = 10
-        print('tr ev', ev)
         dt = ev['time']
         tfs = ev['tfs']
         if ev['type'] == 'transfer':
@@ -196,37 +195,28 @@ class Bot:
                 if 'price' in dtf:
                     em.add_field("Price", f"${dtf['price']:.3f}", inline=True)
             else:
+                em = Embed(title=title, timestamp=dt)
                 tf_text = ''
-                # Since this branch is only taken if TXes are small, it's fine to calculate the
-                # average price by just averaging numbers and not taking liquidity into account.
+                truncated = ev.get('truncated', 0)
                 for i, dtf in enumerate(dtfs):
                     tf_text += f"\n{i+1}. {dtf['short']}"
-                    if i >= MAX_TOP_TFS - 1 and len(dtfs) > MAX_TOP_TFS:
-                        tf_text += f'\nAnd {len(dtfs) - MAX_TOP_TFS:,} others'
+                    if i >= MAX_TOP_TFS - 1:
                         break
-                avg_price, priced_txes = 0, 0
-                buy_volume, sell_volume = 0, 0
-                for dtf in dtfs:
-                    tf = dtf['tf']
-                    if 'usd_price' in tf.meta:
-                        priced_txes += 1
-                        avg_price += tf.meta['usd_price']
-                    if tf.meta.get('usd_value') and DEX_TAG_BUY in tf.tags:
-                        buy_volume += tf.meta['usd_value']
-                    elif tf.meta.get('usd_value') and DEX_TAG_SELL in tf.tags:
-                        sell_volume += tf.meta['usd_value']
-                if avg_price > 0:
-                    avg_price = avg_price / priced_txes
-                color = average_color(map(lambda tf: tf['color'], dtfs))
-                em = Embed(color=color, title=title, timestamp=dt)
+                if i != len(dtfs) - 1 or truncated:
+                    tf_text += f'\nAnd {len(dtfs) - i - 1 + truncated:,} others'
+
+                if ev['type'] == 'dex':
+                    ratio = ev['buy_usd'] / (ev['buy_usd'] + ev['sell_usd'])
+                    em.color = Color.from_hsv(h=ratio / 3, s=0.69, v=1)
+                    em.add_field("Avg Price", f"${ev['avg_price']:.3f}", inline=True)
+                    em.add_field("Buy/Sell Volume", f"${ev.get('buy_usd', 0):,.2f} / ${ev.get('sell_usd', 0):,.2f}", inline=True)
+                else:
+                    em.color = average_color(map(lambda tf: tf['color'], dtfs))
+
                 if desc:
                     em.description = f"{desc}\n\n**Largest transactions**{tf_text}"
                 else:
                     em.description = f"**Largest transactions**{tf_text}"
-                if avg_price:
-                    em.add_field("Avg Price", f"${avg_price:.3f}", inline=True)
-                if buy_volume or sell_volume:
-                    em.add_field("Buy/Sell Volume", f"${buy_volume:,.2f} / ${sell_volume:,.2f}", inline=True)
         except Exception as exc:
             self.log.error(f"Failed to describe tfs: {exc}", exc_info=True)
             tf_text = ''
@@ -395,7 +385,7 @@ class Bot:
              'chain': tf.chain, 'color': Color.from_rgb(129, 190, 238), 'url': self.get_tf_url(tf)}
         if 'usd_price' in tf.meta:
             d['price'] = tf.meta['usd_price']
-        if IDENA_TAG_SEND in tf.tags:
+        if IDENA_TAG_SEND in tf.tags or len(tf.tags) == 0:
             d.update({'title': 'Transfer',
                       'desc': f'Sent **{int(tf.value()):,}** iDNA to {self.get_addr_text(tf.to(single=True), chain=tf.chain)}',
                       'short': self.get_tx_text(tf, f'Sent to {shorten(tf.to(single=True))}')})
@@ -561,7 +551,8 @@ class Bot:
 def create_bot(db: Database, conf: Config, root_log: Logger):
     disbot = commands.InteractionBot()
     log = root_log.getChild("DI")
-    bot = Bot(disbot, conf.discord, db, root_log)
+    DEV_USER = int(os.environ["DEV_USER_ID"])
+    bot = Bot(disbot, conf.discord, db, DEV_USER, root_log)
     admin_users = conf.discord.admin_users
     admin_roles = conf.discord.admin_roles
     command_roles = lambda: chain(conf.discord.command_roles, admin_roles)
@@ -660,7 +651,7 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
     async def check(msg: disnake.CommandInteraction):
         "Check for transfer events"
         await bot.tracker.check_events()
-        await bot.tracker.check_trade_events()
+        await bot.tracker.check_cex_events()
         await bot.send_response(msg, {'content': 'Ok', 'ephemeral': True})
 
     @xxdev.sub_command()
@@ -669,7 +660,7 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
         "Reset tracker state and check for notifications"
         bot.tracker._reset_state()
         await bot.tracker.check_events()
-        await bot.tracker.check_trade_events()
+        await bot.tracker.check_cex_events()
         await bot.send_response(msg, {'content': 'Ok', 'ephemeral': True})
 
     @xxdev.sub_command(options=[disnake.Option("tx_hashes", description="TX hashes, comma separated", required=True, type=disnake.OptionType.string), disnake.Option("ev_type", description="Event type", required=False, type=disnake.OptionType.string)])

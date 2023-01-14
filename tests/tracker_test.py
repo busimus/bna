@@ -2,11 +2,13 @@ import os
 import time
 import asyncio
 import pytest
+from copy import deepcopy
 from decimal import Decimal
 from asyncio import Queue as AsyncQueue
 from datetime import datetime, timezone, timedelta
 
 from bna import init_logging
+from bna.discord_bot import Bot
 from bna.config import Config
 from bna.database import Database
 from bna.tracker import Tracker
@@ -125,7 +127,7 @@ interesting_cases = {
     # Case 0: Unintetersing tag
     [({'from': FND, 'to': '0x2', 'amount': '0', 'tags': ['invite']}, None)],
     # Case 1: Foundation
-    [({'from': FND, 'to': '0x2', 'amount': '0'}, in_ev(FND, 1))],
+    [({'from': FND, 'to': '0x2', 'amount': '1'}, in_ev(FND, 1))],
     # Case 2: Premine
     [({'from': PRM, 'to': '0x2', 'amount': '1000'}, in_ev(PRM, 1))],
 ]}
@@ -203,6 +205,7 @@ async def get_test_env():
     log = init_logging()
     events = AsyncQueue()
     os.environ['POSTGRES_CONNSTRING'] = 'postgresql://postgres:123@localhost:5432/bna_pytest'
+    os.environ['DEV_USER_ID'] = '0'
     db = Database(log, f'/tmp/bna_pytest_conf_{int(time.time())}.json')
     await db.connect(True)
     db.cache_cleaned_at = datetime.max.replace(tzinfo=timezone.utc)
@@ -218,12 +221,17 @@ async def test_transfer_events():
 
     i = 0
     now = int(time.time())
+    bot = Bot(None, Config().discord, db, 0, log)
+    bot.stopped = True
+    tracker = Tracker(db, None, None, None, None, None, events, log)
     for t, table in enumerate([transfer_cases, majority_transfer_cases,
                                kill_cases, interesting_cases]):
         table_config, cases = table['config'], table['cases']
         conf = get_default_config()
         if table_config:
             conf.tracker.__dict__.update(table_config)
+        bot.conf = conf.discord
+        tracker.conf = conf.tracker
         timestamp = now
         for c, case in enumerate(cases):
             for s, step in enumerate(case):
@@ -246,12 +254,11 @@ async def test_transfer_events():
 
         for i, case in enumerate(cases):
             print(f"###   Transfer Case {t}_{i}   ###")
-            tracker = Tracker(db, conf.tracker, None, None, None, None, events, log)
-            await run_transfer_case(tracker, case)
-            # tracker.reset_state()
+            await run_transfer_case(tracker, case, bot)
+            tracker._reset_state()
     await db.close()
 
-async def run_transfer_case(t: Tracker, tf_evs: list[(Transfer, dict)]):
+async def run_transfer_case(t: Tracker, tf_evs: list[(Transfer, dict)], bot: Bot):
     """
     Takes a tracker and a list of tuples (Transfer, event), inserts transfers
     and checks for events. Then removes transfers in reverse and checks for no events.
@@ -268,7 +275,9 @@ async def run_transfer_case(t: Tracker, tf_evs: list[(Transfer, dict)]):
         print(tf)
         await t.db.insert_transfers([tf])
         await t.check_events()
-        compare_transfer_event(chan, ev)
+        got_ev = compare_transfer_event(chan, ev)
+        if got_ev:
+            await bot._publish_event(got_ev) # to test that it doesn't crash
 
     print("Going backwards")
     # removing transfers
@@ -279,16 +288,17 @@ async def run_transfer_case(t: Tracker, tf_evs: list[(Transfer, dict)]):
         compare_transfer_event(chan, None)
     await t.db.store.conn.commit()
 
-def compare_transfer_event(chan: AsyncQueue, expected_event: dict | None):
-    got_ev = None
+def compare_transfer_event(chan: AsyncQueue, expected_event: dict | None) -> dict | None:
+    full_ev, cmp_ev = None, None
     try:
-        got_ev = chan.get_nowait()
+        full_ev = chan.get_nowait()
+        cmp_ev = deepcopy(full_ev)
         if expected_event and expected_event.get('_tfs_len'):
-            assert len(got_ev['tfs']) == expected_event['_tfs_len']
+            assert len(cmp_ev['tfs']) == expected_event['_tfs_len']
             del expected_event['_tfs_len']
         for item in ['time', 'hash', 'tf', 'tfs', 'kills', 'count']:
             try:
-                del got_ev[item]
+                del cmp_ev[item]
             except:
                 pass
     except asyncio.queues.QueueEmpty:
@@ -297,12 +307,16 @@ def compare_transfer_event(chan: AsyncQueue, expected_event: dict | None):
         print('exception: ', e)
         raise e
 
-    assert got_ev == expected_event
+    assert cmp_ev == expected_event
+    return full_ev
 
 @pytest.mark.asyncio
 async def test_cex_trade_events():
     log, events, db = await get_test_env()
 
+    tracker = Tracker(db, None, None, None, None, None, events, log)
+    bot = Bot(None, Config().discord, db, 0, log)
+    bot.stopped = True
     i = 0
     now = int(time.time())
     for t, table in enumerate([trade_cases]):
@@ -310,6 +324,8 @@ async def test_cex_trade_events():
         conf = get_default_config()
         if table_config:
             conf.tracker.__dict__.update(table_config)
+        bot.conf = conf.discord
+        tracker.conf = conf.tracker
         timestamp = now - 100
         for c, case in enumerate(cases):
             for s, step in enumerate(case):
@@ -322,13 +338,12 @@ async def test_cex_trade_events():
                 i += 1
 
         for i, case in enumerate(cases):
-            tracker = Tracker(db, conf.tracker, None, None, None, None, events, log)
             print(f"###   Trade Case {t}_{i}   ###")
-            await run_cex_trade_case(tracker, case)
+            await run_cex_trade_case(tracker, case, bot)
             tracker._reset_state()
     await db.close()
 
-async def run_cex_trade_case(t: Tracker, tr_evs: list[(Trade, dict)]):
+async def run_cex_trade_case(t: Tracker, tr_evs: list[(Trade, dict)], bot: Bot):
     """
     Takes a tracker and a list of tuples (Trade, event), inserts trades
     and checks for events. Then removes trades in reverse and checks for no events.
@@ -341,26 +356,29 @@ async def run_cex_trade_case(t: Tracker, tr_evs: list[(Trade, dict)]):
         prev_tr = tr
         print(tr)
         await t.db.insert_trades([tr])
-        await t.check_trade_events()
-        compare_trade_event(chan, ev)
+        await t.check_cex_events()
+        ev = compare_trade_event(chan, ev)
+        if ev:
+            await bot._publish_event(ev) # to test that it doesn't crash
 
     print("Going backwards")
     # removing trades
     for step in tr_evs:
         tr, ev = step[0], step[1]
         await t.db._remove_trade(tr)
-        await t.check_trade_events()
+        await t.check_cex_events()
         compare_trade_event(chan, None)
     await t.db.store.conn.commit()
 
-def compare_trade_event(chan: AsyncQueue, expected_event: dict | None):
-    got_ev = None
+def compare_trade_event(chan: AsyncQueue, expected_event: dict | None) -> dict | None:
+    full_ev, cmp_ev = None, None
     try:
-        got_ev = chan.get_nowait()
-        print('got_ev=', got_ev)
+        full_ev = chan.get_nowait()
+        cmp_ev = deepcopy(full_ev)
+        print('got_ev=', cmp_ev)
         for item in ['time', 'hash', 'tf', 'tfs', 'kills', 'count']:
             try:
-                del got_ev[item]
+                del cmp_ev[item]
             except:
                 pass
     except asyncio.queues.QueueEmpty:
@@ -368,4 +386,5 @@ def compare_trade_event(chan: AsyncQueue, expected_event: dict | None):
     except Exception as e:
         print('exception: ', e)
         raise e
-    assert got_ev == expected_event
+    assert cmp_ev == expected_event
+    return full_ev
