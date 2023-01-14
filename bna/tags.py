@@ -1,0 +1,40 @@
+IDENA_TAG_SEND = 'send'
+IDENA_TAG_BURN = 'burn'
+IDENA_TAG_KILL = 'kill'
+IDENA_TAG_STAKE = 'replenishStake'
+IDENA_TAG_INVITE = 'invite'
+IDENA_TAG_ACTIVATE = 'activation'
+IDENA_TAG_DELEGATE = 'delegate'
+IDENA_TAG_UNDELEGATE = 'undelegate'
+IDENA_TAG_KILL_DELEGATOR = 'killDelegator'
+IDENA_TAG_SUBMIT_FLIP = 'submitFlip'
+IDENA_TAG_DELETE_FLIP = 'deleteFlip'
+IDENA_TAG_DEPLOY = 'deployContract'
+IDENA_TAG_CALL = 'callContract'
+IDENA_TAG_BRIDGE_MINT = 'ibridge_mint'
+IDENA_TAG_BRIDGE_BURN = 'ibridge_burn'
+IDENA_TAG_BRIDGE_BURN_WRONG = 'ibridge_burn_wrong'
+
+IDENA_COUNTABLE_TAGS = [IDENA_TAG_BURN, IDENA_TAG_INVITE, IDENA_TAG_ACTIVATE,
+                      # IDENA_TAG_SUBMIT_FLIP, IDENA_TAG_DELETE_FLIP,
+                        IDENA_TAG_DELEGATE, IDENA_TAG_UNDELEGATE, IDENA_TAG_KILL_DELEGATOR]
+
+# These types will be stored even if they have no effect on the balances
+IDENA_STATS_TAGS = [IDENA_TAG_INVITE, IDENA_TAG_ACTIVATE, IDENA_TAG_CALL,
+                  # IDENA_TAG_SUBMIT_FLIP, IDENA_TAG_DELETE_FLIP,
+                    IDENA_TAG_DELEGATE, IDENA_TAG_UNDELEGATE, IDENA_TAG_KILL_DELEGATOR]
+
+
+BSC_TAG_BRIDGE_BURN = 'bridge_burn'
+BSC_TAG_BRIDGE_MINT = 'bridge_mint'
+BSC_STATS_TAGS = [BSC_TAG_BRIDGE_BURN, BSC_TAG_BRIDGE_MINT]
+
+DEX_TAG = 'dex'
+DEX_TAG_SELL = 'dex_sell'
+DEX_TAG_BUY = 'dex_buy'
+DEX_TAG_ARB = 'dex_arb'
+DEX_TAG_PROVIDE_LP = 'dex_provide_lp'
+DEX_TAG_WITHDRAW_LP = 'dex_withdraw_lp'
+
+DEX_LP_TAGS = [DEX_TAG_PROVIDE_LP, DEX_TAG_WITHDRAW_LP]
+DEX_TRADE_TAGS = [DEX_TAG_BUY, DEX_TAG_SELL]

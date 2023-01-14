@@ -1,0 +1,23 @@
+{
+    "DataDir": "/idena/",
+    "P2P": {
+      "ListenAddr": ":50555",
+      "MaxInboundPeers": 4,
+      "MaxOutboundPeers": 4
+    },
+    "RPC": {
+      "HTTPHost": "0.0.0.0",
+      "HTTPPort": 9009,
+      "HTTPVirtualHosts": ["bna", "bna_bot", "bna_idena"],
+      "APIKey": "123"
+    },
+    "IpfsConf": {
+      "IpfsPort": 50556,
+      "FlipPinThreshold": 0.0,
+      "BlockPinThreshold": 1.00,
+      "Profile": "server"
+    },
+    "Sync": {
+      "FastSync": false
+    }
+  }

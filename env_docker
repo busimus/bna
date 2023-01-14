@@ -1,0 +1,16 @@
+# Can be obtained at https://discord.com/developers/applications/YOUR_APP_ID/bot
+DISCORD_BOT_TOKEN=
+# User that will run initial configuration commands
+DEV_USER_ID=
+
+BSC_RPC_URL=
+BSC_WS_URL=
+# If you want to use a different RPC endpoint for fetching old logs, you can set it here
+# BSC_HISTORY_RPC_URL=
+
+POSTGRES_CONNSTRING=postgresql://bna:bna@bna_postgres:5432/bna
+
+IDENA_RPC_URL=http://bna_idena:9009
+IDENA_RPC_KEY=123
+# There's a dependency on an indexer node for certain tasks, but you can run your own indexer if you don't want to depend on devs' indexer
+IDENA_API_URL=https://api.idena.io/api/

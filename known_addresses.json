@@ -1,0 +1,174 @@
+{
+    "0xc1bcdc9eb37d8e72ff0e0ca4bc8d19735b1b38ce": {
+        "name": "iDNA/BUSD Pool",
+        "type": "pool",
+        "token0": "0x0de08c1abe5fb86dd7fd2ac90400ace305138d5b",
+        "token1": "0xe9e7cea3dedca5984780bafc599bd69add087d56"
+    },
+    "0xaa4dce8585528265c6bac502ca9578343f82630f": {
+        "name": "iDNA/BNB Pool",
+        "type": "pool",
+        "token0": "0x0de08c1abe5fb86dd7fd2ac90400ace305138d5b",
+        "token1": "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c"
+    },
+    "0x0039344Eb266b027393aC6005E564AD13C450119": {
+        "name": "iDNA/BSC-USD Pool",
+        "type": "pool",
+        "token0": "0x0de08c1abe5fb86dd7fd2ac90400ace305138d5b",
+        "token1": "0x55d398326f99059ff775485246999027b3197955"
+    },
+    "0x63ea889466b112f3ce38e7e63592188763390be9": {
+        "name": "iDNA/SERVE Pool",
+        "type": "pool",
+        "token0": "0x0de08c1abe5fb86dd7fd2ac90400ace305138d5b",
+        "token1": "0x3f1d29b611c649eec1e62be2237891dd88e1afe0"
+    },
+    "0x09eea14ab1286838d827ec3eac9359754a1daaa5": {
+        "name": "iDNA/BUSD JM Pool",
+        "type": "pool",
+        "token0": "0x0de08c1abe5fb86dd7fd2ac90400ace305138d5b",
+        "token1": "0xe9e7cea3dedca5984780bafc599bd69add087d56"
+    },
+    "0x98D16d7021930b788135dD834983394fF2De9869": {
+        "name": "Bridge (iDNA)",
+        "type": "bridge",
+        "chain": "idena"
+    },
+    "0xbda1991c16c7348e37f49c536f87646fe7698a92": {
+        "name": "Bridge Deployer",
+        "chain": "bsc",
+        "type": "bridge"
+    },
+    "0x0de08c1abe5fb86dd7fd2ac90400ace305138d5b": {
+        "name": "wiDNA",
+        "type": "token",
+        "price_id": "cg:idena",
+        "decimals": 18
+    },
+    "0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c": {
+        "name": "BNB",
+        "type": "token",
+        "price_id": "cg:binancecoin",
+        "decimals": 18
+    },
+    "0xe9e7cea3dedca5984780bafc599bd69add087d56": {
+        "name": "BUSD",
+        "type": "token",
+        "price_id": "cg:binance-usd",
+        "decimals": 18
+    },
+    "0x55d398326f99059ff775485246999027b3197955": {
+        "name": "BSC-USD",
+        "type": "token",
+        "price_id": "cg:tether",
+        "decimals": 18
+    },
+    "0x3f1d29b611c649eec1e62be2237891dd88e1afe0": {
+        "name": "SERVE",
+        "type": "token",
+        "price_id": "ds:0x331ad6a9372d09d6ecb19399cda6634755c4460b",
+        "decimals": 18
+    },
+    "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": {
+        "name": "BTCB",
+        "type": "token",
+        "price_id": "cg:binance-btc",
+        "decimals": 18
+    },
+    "0x1111111254fb6c44bac0bed2854e76f90643097d": {
+        "name": "1inch Router v4",
+        "type": "dex"
+    },
+    "0x9c4350f527ff7f96b650ee894ae9103bdfec0432": {
+        "name": "1inch Router Middleware",
+        "type": "dex"
+    },
+    "0xdef171fe48cf0115b1d80b88dc8eab59176fee57": {
+        "name": "Paraswap v5: Augustus Swapper",
+        "type": "dex"
+    },
+    "0x10ed43c718714eb63d5aa57b78b54704e256024e": {
+        "name": "PancakeSwap: Router v2",
+        "type": "dex"
+    },
+    "0x1a1ec25dc08e98e5e93f1104b5e5cdd298707d31": {
+        "name": "Metamask swap router",
+        "type": "dex"
+    },
+    "0x5b8896aEd1d98604c00bAcF1643F752949Fe807D": {
+        "name": "Early investors fund vested for 1 year",
+        "type": "premine"
+    },
+    "0x9bf19e7d58B2A95aaBD0cB8bd0Bc7da1c72E696b": {
+        "name": "Early investors fund vested for 2 years",
+        "type": "premine"
+    },
+    "0x3095aba0d34afec9b05674f9e195268bb643c392": {
+        "name": "Core team fund vested for 3 years",
+        "type": "premine"
+    },
+    "0x05de18d4c4a9bbe43a195a3856bcb9cdff973f9e": {
+        "name": "Core team fund vested for 5 years",
+        "type": "premine"
+    },
+    "0x0a8B4b113d863c86f64E49a1270F7a4A9B65dAAc": {
+        "name": "Reserved runway funding 2020",
+        "type": "premine"
+    },
+    "0x477E32166cd16C1b4909BE783347e705Aef3d5db": {
+        "name": "Reserved runway funding 2021-2022",
+        "type": "premine"
+    },
+    "0xc94D32638D71aBA05F0bDADE498948eF93944428": {
+        "name": "Ambassadors fund",
+        "type": "premine"
+    },
+    "0xcbb98843270812eeCE07BFb82d26b4881a33aA91": {
+        "name": "Foundation wallet",
+        "type": "foundation"
+    },
+    "0x4d60dC6A2CbA8c3EF1Ba5e1Eba5c12c54cEE6B61": {
+        "name": "Previous foundation wallet",
+        "type": "foundation"
+    },
+    "0x182d0fDC04859021456c4F8EE5314AcF57E31650": {
+        "name": "Community wallet",
+        "type": "community"
+    },
+    "0x0000000000000000000000000000000000000000": {
+        "name": {
+            "idena": "Zero wallet",
+            "bsc": "wiDNA bridge"
+        },
+        "type": "foundation",
+        "chain": "idena"
+    },
+    "0xb0C3fD00cCd9CEAf17dad2524212021953D6ce0B": {
+        "name": "Rioda's pool",
+        "type": "personal"
+    },
+    "0x664d30b74a1876d8f846a00e56916129229cd1b4": {
+        "name": "Pharaoh's pool",
+        "type": "personal"
+    },
+    "0x83B8A2F9Bd1bE7f1fB496ec91eB0C6983cD38725": {
+        "name": "qTrade",
+        "type": "cex"
+    },
+    "0x4E55380bD90b754615A779FC3C4cf949481875CB": {
+        "name": "Hotbit",
+        "type": "cex"
+    },
+    "0x993Bf1433532704630B6217940E81E973FFB4f98": {
+        "name": "BitMart",
+        "type": "cex"
+    },
+    "0x6BA829752265E53cFA851d73D4e2b5FEFB518882": {
+        "name": "ProBit",
+        "type": "cex"
+    },
+    "0xb901e8817d41f2b7dcc263ef9aa60d6adb3f322a": {
+        "name": "ViteX",
+        "type": "cex"
+    }
+}

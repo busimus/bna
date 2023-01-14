@@ -1,0 +1,50 @@
+version: '3.9'
+
+volumes:
+  bna_data: {}
+  idena_data: {}
+  postgres_data: {}
+
+services:
+  bna:
+    container_name: bna_bot
+    image: bna
+    user: "bnauser:bnauser"
+    restart: unless-stopped
+    volumes:
+      - bna_data:/app/state
+    environment:
+      - "BNA_CONFIG_FILE=/app/state/config.json"
+    env_file:
+      - env_docker
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    depends_on:
+      postgres:
+        condition: service_started
+      idena:
+        condition: service_healthy
+
+  idena:
+    container_name: bna_idena
+    image: idena
+    user: "idenauser:idenauser"
+    build:
+      context: docker_idena
+      dockerfile: ./Dockerfile
+    restart: always
+    volumes:
+      - idena_data:/idena
+
+
+  postgres:
+    container_name: bna_postgres
+    image: bitnami/postgresql:15
+    restart: always
+    environment:
+      - POSTGRESQL_USERNAME=bna
+      - POSTGRESQL_PASSWORD=bna
+      - POSTGRESQL_DATABASE=bna
+    volumes:
+      - postgres_data:/bitnami/postgresql
