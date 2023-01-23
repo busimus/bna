@@ -151,11 +151,23 @@
         "name": "Pharaoh's pool",
         "type": "personal"
     },
+    "0xDDDDaDDB856901ac3e2251b8234EfeaB2188b22A": {
+        "name": "Dalik's farm 1",
+        "type": "personal"
+    },
+    "0xDDDDcFdCC512FacD27038BAd958742E81e2982cB": {
+        "name": "Dalik's farm 2",
+        "type": "personal"
+    },
     "0x83B8A2F9Bd1bE7f1fB496ec91eB0C6983cD38725": {
         "name": "qTrade",
         "type": "cex"
     },
     "0x4E55380bD90b754615A779FC3C4cf949481875CB": {
+        "name": "Hotbit",
+        "type": "cex"
+    },
+    "0xD30BCC9056d9b1AdCc559E4aF42ABABE0F1B1a96": {
         "name": "Hotbit",
         "type": "cex"
     },

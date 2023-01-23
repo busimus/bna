@@ -431,6 +431,7 @@ class Tracker:
             period = self.conf.stats_interval
         all_tfs = await self.db.recent_transfers(period)
         tfs: list[Transfer] = []
+        addresses: list[str] = defaultdict(lambda: {'stake': 0, 'stake_usd': 0, 'signer': None})
         total_usd_value = 0
         total_idna = 0
         total_age = 0
@@ -444,7 +445,9 @@ class Tracker:
                     total_idna += tf.value(True)
             elif top_type == 'stake':
                 if IDENA_TAG_STAKE in tf.tags:
-                    tfs.append(tf)
+                    addresses[tf.signer]['signer'] = tf.signer
+                    addresses[tf.signer]['stake'] += int(tf.value())
+                    addresses[tf.signer]['stake_usd'] += tf.meta.get('usd_value', 0)
                     total_usd_value += tf.meta.get('usd_value', 0)
                     total_idna += tf.value()
             elif top_type == 'dex':
@@ -456,18 +459,22 @@ class Tracker:
                 if not any_in(tf.tags, [IDENA_TAG_KILL, IDENA_TAG_STAKE, DEX_TAG]) and value != 0:
                     tfs.append(tf)
                     total_usd_value += tf.meta.get('usd_value', 0)
-        if len(tfs) == 0:
+        if len(tfs) == 0 and len(addresses) == 0:
             return None
 
-        tfs.sort(reverse=True, key=lambda tf: tf.meta.get('usd_value', 0))
-        full_count = len(tfs)
+        if top_type == 'stake':
+            items = list(sorted(addresses.values(), key=lambda a: a['stake'], reverse=True))
+        else:
+            tfs.sort(reverse=True, key=lambda tf: tf.meta.get('usd_value', 0))
+            items = tfs
+        full_count = len(items)
         self.log.debug(f"tf count before truncation: {full_count}")
         max_lines = self.conf.top_events_max_lines
         if long:
             max_lines = 100
-        tfs = tfs[:max_lines]
-        truncated = full_count - len(tfs)
-        ev = {'event': 'top', 'top_type': top_type, 'period': period, 'tfs': tfs, 'truncated': truncated,
+        items = items[:max_lines]
+        truncated = full_count - len(items)
+        ev = {'event': 'top', 'top_type': top_type, 'period': period, 'items': items, 'truncated': truncated,
               'total_usd_value': total_usd_value, 'total_idna': total_idna, 'total_age': total_age}
         return ev
 

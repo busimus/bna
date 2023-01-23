@@ -337,16 +337,21 @@ class Bot:
             desc += f'. Total age: **{ev["total_age"]:,}**'
         tf_texts = []
         total_len = 0
-        tfs: list[Transfer] = ev['tfs']
+        items: list[Transfer | dict] = ev['items']
         didnt_fit = 0
-        for i, tf in enumerate(tfs):
+        for i, item in enumerate(items):
+            if ev['top_type'] == 'stake':
+                pass
+            else:
+                tf: Transfer = item
+
             if ev['top_type'] == 'kill':
                 killed = self.get_addr_text(tf.meta['killedIdentity'], type_='identity', short_len=4)
                 stake = abs(list(tf.changes.values())[0])
                 tf_texts.append(f"{i+1}. {killed} ({stake:,.0f} iDNA, age: {tf.meta['age']})")
             elif ev['top_type'] == 'stake':
-                addr = self.get_addr_text(tf.signer, type_='identity')
-                tf_texts.append(f"{i+1}. {addr} ({tf.value():,.0f} iDNA)")
+                addr = self.get_addr_text(item['signer'], type_='address')
+                tf_texts.append(f"{i+1}. {addr} ({item['stake']:,.0f} iDNA)")
             elif ev['top_type'] == 'dex':
                 dtf = self.describe_tf(tf)
                 tf_texts.append(f"{i+1}. {dtf['short']}")
@@ -359,7 +364,7 @@ class Bot:
                 tf_texts.append(f"{i+1}. {dtf['short']}")
             total_len += len(tf_texts[-1])
             if total_len >= DESC_LIMIT - 500:  # some margin
-                didnt_fit = len(tfs) - i + 1
+                didnt_fit = len(items) - i + 1
                 break
         if didnt_fit or ev["truncated"]:
             tf_texts.append(f'And {didnt_fit + ev["truncated"]:,} others')
@@ -427,7 +432,7 @@ class Bot:
                       'color': Color.light_grey()})
         elif BSC_TAG_BRIDGE_MINT in tf.tags:
             d.update({'title': 'Bridge transfer from Idena',
-                      'desc': f'Bridged **{int(tf.value()):,}** iDNA to BSC address {self.get_addr_text(tf.to(True))}',
+                      'desc': f'Bridged **{int(tf.value()):,}** iDNA to BSC address {self.get_addr_text(tf.to(True), chain="bsc")}',
                       'short': self.get_tx_text(tf, f'Bridged from Idena: {shorten(tf.to(single=True))}'),
                       'color': Color.light_grey()})
         elif DEX_TAG not in tf.tags:
