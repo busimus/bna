@@ -335,6 +335,10 @@ class Bot:
             desc += f' (**{ev["total_idna"]:,.0f}** iDNA)'
         if ev['top_type'] == 'kill':
             desc += f'. Total age: **{ev["total_age"]:,}**'
+        elif ev['top_type'] == 'dex':
+            desc = f"Buy/Sell volume: **${ev['buy_usd']:,.0f}** / **${ev['sell_usd']:,.0f}**"
+            if ev['lp_usd'] != 0:
+                desc += f"\nLiquidity change: **{'-' if ev['lp_usd'] < 0 else '+'}${ev['lp_usd']:,.0f}**"
         tf_texts = []
         total_len = 0
         items: list[Transfer | dict] = ev['items']

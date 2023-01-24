@@ -338,9 +338,8 @@ class Tracker:
             m_vol = market['buy'] + market['sell']
             m_usd_val = market['buy_usd_value'] + market['sell_usd_value']
             market['avg_price'] = m_usd_val / float(m_vol)
-            # TODO: This breaks tests and I can't be bothered to fix them
-            # if m_usd_val / total_usd_val > self.conf.majority_volume_fraction:
-            #     final_markets = [market]
+            if m_usd_val / total_usd_val > self.conf.majority_volume_fraction:
+                final_markets = [market]
             final_markets.append(market)
 
         final_markets.sort(key=lambda m: m['buy_usd_value'] + m['sell_usd_value'], reverse=True)
@@ -432,50 +431,55 @@ class Tracker:
         all_tfs = await self.db.recent_transfers(period)
         tfs: list[Transfer] = []
         addresses: list[str] = defaultdict(lambda: {'stake': 0, 'stake_usd': 0, 'signer': None})
-        total_usd_value = 0
-        total_idna = 0
-        total_age = 0
+        ev = {'event': 'top', 'top_type': top_type, 'period': period,
+              'total_usd_value': 0, 'total_idna': Decimal(0)}
 
-        for tf in all_tfs:
-            if top_type == 'kill':
+        if top_type == 'dex':
+            dex_tfs = [tf for tf in all_tfs if DEX_TAG in tf.tags]
+            aggr = self.aggregate_dex_trades(dex_tfs)
+            ev['total_idna'] = aggr['buy'] + aggr['sell']
+            ev['total_usd_value'] = aggr['quote_amount']
+            dex_tfs.sort(reverse=True, key=lambda tf: tf.meta.get('usd_value', 0))
+            ev['items'] = dex_tfs
+            ev.update(aggr)
+        elif top_type == 'kill':
+            ev['total_age'] = 0
+            for tf in all_tfs:
                 if IDENA_TAG_KILL in tf.tags:
                     tfs.append(tf)
-                    total_age += tf.meta.get('age')
-                    total_usd_value += tf.meta.get('usd_value', 0)
-                    total_idna += tf.value(True)
-            elif top_type == 'stake':
+                    ev['total_age'] += tf.meta.get('age')
+                    ev['total_usd_value'] += tf.meta.get('usd_value', 0)
+                    ev['total_idna'] += tf.value(True)
+            tfs.sort(reverse=True, key=lambda tf: tf.meta.get('usd_value', 0))
+            ev['items'] = tfs
+        elif top_type == 'stake':
+            for tf in all_tfs:
                 if IDENA_TAG_STAKE in tf.tags:
                     addresses[tf.signer]['signer'] = tf.signer
                     addresses[tf.signer]['stake'] += int(tf.value())
                     addresses[tf.signer]['stake_usd'] += tf.meta.get('usd_value', 0)
-                    total_usd_value += tf.meta.get('usd_value', 0)
-                    total_idna += tf.value()
-            elif top_type == 'dex':
-                if DEX_TAG in tf.tags:
-                    tfs.append(tf)
-                    total_usd_value += tf.meta.get('usd_value', 0)
-            elif top_type == 'transfer':
+                    ev['total_usd_value'] += tf.meta.get('usd_value', 0)
+                    ev['total_idna'] += tf.value()
+            ev['items'] = list(sorted(addresses.values(), key=lambda a: a['stake'], reverse=True))
+        elif top_type == 'transfer':
+            for tf in all_tfs:
                 value = tf.meta.get('usd_value', 0)
                 if not any_in(tf.tags, [IDENA_TAG_KILL, IDENA_TAG_STAKE, DEX_TAG]) and value != 0:
                     tfs.append(tf)
-                    total_usd_value += tf.meta.get('usd_value', 0)
-        if len(tfs) == 0 and len(addresses) == 0:
+                    ev['total_usd_value'] += value
+            tfs.sort(reverse=True, key=lambda tf: tf.meta.get('usd_value', 0))
+            ev['items'] = tfs
+
+        if len(ev['items']) == 0:
             return None
 
-        if top_type == 'stake':
-            items = list(sorted(addresses.values(), key=lambda a: a['stake'], reverse=True))
-        else:
-            tfs.sort(reverse=True, key=lambda tf: tf.meta.get('usd_value', 0))
-            items = tfs
-        full_count = len(items)
+        full_count = len(ev['items'])
         self.log.debug(f"tf count before truncation: {full_count}")
         max_lines = self.conf.top_events_max_lines
         if long:
             max_lines = 100
-        items = items[:max_lines]
-        truncated = full_count - len(items)
-        ev = {'event': 'top', 'top_type': top_type, 'period': period, 'items': items, 'truncated': truncated,
-              'total_usd_value': total_usd_value, 'total_idna': total_idna, 'total_age': total_age}
+        ev['items'] = ev['items'][:max_lines]
+        ev['truncated'] = full_count - len(ev['items'])
         return ev
 
     async def generate_pool_stats(self, period=None) -> dict | None:
@@ -520,16 +524,33 @@ class Tracker:
         return value
 
     def aggregate_dex_trades(self, tfs: list[Transfer]) -> dict:
-        m = {'buy': Decimal(0), 'sell': Decimal(0), 'buy_usd': 0, 'sell_usd': 0, 'quote_amount': 0}
+        m = {'buy': Decimal(0), 'sell': Decimal(0), 'buy_usd': 0, 'sell_usd': 0, 'quote_amount': 0, 'lp_usd': 0}
         for tf in tfs:
-            if all([t not in DEX_LP_TAGS for t in tf.tags]):
+            if any_in(tf.tags, DEX_LP_TAGS):
+                self.log.debug(f"{tf=}")
+                lp_excess = tf.meta.get('lp_excess', Decimal(0))
+                if lp_excess:
+                    combined_usd = tf.meta.get('usd_value', 0)
+                    traded_usd = combined_usd - float(abs(tf.meta.get('lp_excess', 0))) * tf.meta.get('usd_price', 0)
+                    lp = combined_usd - traded_usd
+                    m['quote_amount'] += traded_usd
+                    if lp_excess > 0:
+                        m['buy'] += lp_excess
+                        m['buy_usd'] += traded_usd
+                    else:
+                        m['sell'] += lp_excess
+                        m['sell_usd'] += traded_usd
+                    m['lp_usd'] += lp * (-1 if DEX_TAG_WITHDRAW_LP in tf.tags else 1)
+                else:
+                    m['lp_usd'] += tf.meta.get('usd_value', 0) * (-1 if DEX_TAG_WITHDRAW_LP in tf.tags else 1)
+            elif any_in(tf.tags, DEX_TRADE_TAGS):
                 is_buy = DEX_TAG_BUY in tf.tags
-                m['quote_amount'] += Decimal(tf.meta.get('usd_value', 0))
+                m['quote_amount'] += tf.meta.get('usd_value', 0)
                 m['buy_usd' if is_buy else 'sell_usd'] += tf.meta.get('usd_value', 0)
                 for addr, amount in tf.changes.items():
                     if self.db.addr_type(addr) == 'pool':
                         m['buy' if is_buy else 'sell'] += amount * (-1 if is_buy else 1)
-        bsc_vol = m['buy'] + m['sell']
+        bsc_vol = float(m['buy'] + m['sell'])
         m['avg_price'] = (m['quote_amount'] / bsc_vol) if bsc_vol != 0 else 0
         return m
 

@@ -103,6 +103,7 @@ class BscListener:
                 await asyncio.sleep(1)
         logs_task.cancel()
         await self.rpc_session.close()
+        await websocket.close()
 
     async def logs_reader(self, event_chan: AsyncQueue):
         "Consumes logs after some delay (for finality) and generates transfer events"
