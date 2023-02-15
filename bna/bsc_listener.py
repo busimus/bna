@@ -16,6 +16,7 @@ from bna.database import Database
 from bna.config import BscConfig
 from bna.transfer import CHAIN_BSC, Transfer, BscLog
 from bna.tags import *
+from bna.event import BlockEvent, ChainTransferEvent
 from bna.utils import any_in, calculate_usd_value, widen
 
 
@@ -42,7 +43,7 @@ class BscListener:
         self.logs: SortedDict[int, dict[int, BscLog]] = SortedDict()
         self.rpc_session = aiohttp.ClientSession(headers={"Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=10))
         self.block_timestamps: dict[int, int] = {}
-        self.tx_signers: dict[str, str] = {}
+        self.tx_signers: dict[str, str] = {}  # @TODO: leaks
         self.subs = {}
         self.last_sub_id = 0
 
@@ -57,6 +58,7 @@ class BscListener:
         ws_read_timeout = self.conf.ws_event_timeout
         logs_task = asyncio.create_task(self.logs_reader(event_chan), name="logs_reader")
         self.log.info("BSC listener started")
+        # await self.fetch_missing(from_=25416520, until=25416525)
         self.last_block = (await self.db.get_last_block(CHAIN_BSC)) or 0
         self.log.debug(f"Resuming from block {self.last_block}")
         while True:
@@ -129,7 +131,7 @@ class BscListener:
                     tfs = self.process_block(block)
                     self.logs.popitem(0)
                     if tfs:
-                        event_chan.put_nowait({'type': 'transfers', 'chain': CHAIN_BSC, 'tfs': tfs})
+                        event_chan.put_nowait(ChainTransferEvent(chain=CHAIN_BSC, tfs=tfs))
             except Exception as e:
                 self.log.error(f"Reader exc, retry={retry_block}: {e}", exc_info=True)
                 retry_block += 1
@@ -189,7 +191,7 @@ class BscListener:
             await self.fetch_missing(from_=self.last_block, until=num)
             self.log.info("Finished fetching missing")
         self.last_block = num
-        event_chan.put_nowait({'type': 'block', 'chain': CHAIN_BSC, 'value': num})
+        event_chan.put_nowait(BlockEvent(chain=CHAIN_BSC, height=int(num)))
 
     async def get_block_time(self, blockNumber) -> int:
         cached_time = self.block_timestamps.get(blockNumber)
@@ -259,7 +261,7 @@ class BscListener:
                 else:
                     token = self.db.known.get(log.address, None)
                     if token is None or token['type'] != 'token':
-                        self.log.warning("Transfer log of unknown token, skipping")
+                        self.log.warning(f'Transfer log of unknown token "{log.address}", skipping')
                         continue
                     tf_from = log.topic_as_addr(1)
                     tf_to = log.topic_as_addr(2)
@@ -282,6 +284,8 @@ class BscListener:
                     meta['lp'][log.address]['idna'] -= amount_idna
                     meta['lp'][log.address]['token'] -= amount_token
                     tags.add(DEX_TAG_WITHDRAW_LP)
+            else:
+                self.log.warning(f"Unknown log: {log}")
 
         if DEX_TAG_PROVIDE_LP in tags and DEX_TAG_WITHDRAW_LP in tags:
             # shouldn't happen, but you never know with those stupid sexy MEV freaks
@@ -363,7 +367,6 @@ class BscListener:
                     "fromBlock": hex(batch_from + 1), "toBlock": hex(batch_until - 1)}]
             # Fetch iDNA transfer logs
             logs: list[dict] = await self.rpc_req('eth_getLogs', params, url=url) or []
-            self.log.debug(f"Fetched {len(logs)=}")
             for lp in self.db.known_by_type['pool'].keys():
                 # Fetch LP token mint/burn logs
                 params[0]['topics'] = LP_TOPICS
@@ -377,8 +380,10 @@ class BscListener:
                 logs.extend(await self.rpc_req('eth_getLogs', params=params, url=url) or [])
                 params[0]['topics'] = [TRANSFER_TOPIC, None, widen(lp)]
                 logs.extend(await self.rpc_req('eth_getLogs', params=params, url=url) or [])
+            self.log.debug(f"Fetched {len(logs)=}")
 
             new_block_times = {}
+            new_signers = {}
             for log in logs:
                 blockNumber = int(log['blockNumber'], 16)
                 # Since it's possible that "removed=True logs" weren't received,
@@ -390,10 +395,21 @@ class BscListener:
                     timestamp = int(block['timestamp'], 16)
                     self.log.debug(f"Missing head: \t{blockNumber} {timestamp}")
                     new_block_times[blockNumber] = timestamp
+                hash = log['transactionHash']
+                if hash not in self.tx_signers and hash not in new_signers:
+                    signer = await self.fetch_signer(hash)
+                    self.log.debug(f"Missing signer: \t{hash} {signer}")
+                    new_signers[hash] = signer
+
             # This is done separately to avoid awaiting in the middle of state modification
             self.block_timestamps.update(new_block_times)
+            self.tx_signers.update(new_signers)
+
             logs.sort(key=lambda l: (int(l['blockNumber'], 16), int(l['logIndex'], 16)))
+            self.log.debug(f"Inserting {len(logs)=}")
             for log in logs:
+                # await here is really bad because it could cause the reader to read an incomplete block,
+                # unless timestamps and signers are fetched ahead of time, and they are
                 await self.new_log(log)
 
     async def fetch_signer(self, tx_hash) -> str:

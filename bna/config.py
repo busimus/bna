@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class IdenaConfig:
-    rpc_interval: int = 5
-    identities_cache_interval: int = 1200
+    rpc_interval: int = 2
+    identities_cache_interval: int = 300
 
 @dataclass
 class CexConfig:
@@ -47,6 +47,9 @@ class DiscordBotConfig:
     admin_users: list[int] = field(default_factory=list)
     admin_roles: list[int] = field(default_factory=list)
     command_roles: list[int] = field(default_factory=list)
+    pool_event_replace_period: int = 4 * 60 * 60  # seconds
+    event_replace_period: int = 1 * 60 * 60  # seconds
+    rank_addresses: dict = field(default_factory=dict)
 
 @dataclass
 class Config:

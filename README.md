@@ -11,10 +11,14 @@ This is a Discord bot for the Idena project. Its main purpose is to show notific
         * Mass identity changes by pools (terminations, delegations, undelegations)
     * For large DEX volume on BSC (trades and liquidity changes)
     * For large CEX volume (Hotbit, BitMart, ProBit, ViteX)
+    * For when an identity enters a "stake club" (like 100k stake club, etc.)
 * Commands:
     * For recent chain and market stats
     * For recent pool changes
     * For top recent events of some type (transfers, DEX trades, stake replenishments, terminations)
+    * For showing the rank of identity according to its stake and age
+* Lists of transactions/identities can be moved through with buttons
+* Notifications for recent events of a similar type to a new event get updated in place
 * Built in command rate limiting and per-command authorization
 * Most configuration is done using commands by authorized users
 
@@ -25,6 +29,7 @@ DEX transactions</br> <img src="/screenshots/dex.png?raw=true" height="120"> | C
 DEX or CEX volume</br> <img src="/screenshots/dex_multi.png?raw=true" width="50"> <img src="/screenshots/cex_trade.png?raw=true" width="40"> | Top DEX transactions</br> <img src="/screenshots/cmd_top_dex.png?raw=true" width="100">
 Transfers by interesting addresses </br> <img src="/screenshots/interesting.png?raw=true" width="100">| Top transfers </br> <img src="/screenshots/cmd_top_transfer.png?raw=true" width="100">
 Mass pool changes</br> <img src="/screenshots/mass_termination.png?raw=true" width="100"> | Pool stats</br> <img src="/screenshots/cmd_pools.png?raw=true" width="100">
+Stake club membership</br> <img src="/screenshots/club.png?raw=true" width="100"> | Identity rank</br> <img src="/screenshots/cmd_rank.png?raw=true" width="100">
 
 and more in the `screenshots` folder.
 
@@ -75,13 +80,9 @@ python main.py -env env
 
 ## TODO
 * Show accolades next to addresses (notable stake, age, or pool size)
-* Show current stake on stake replenishments, pool size on mass pool movements
-* Show the list of transactions/identities for an event in a separate view
-* Editing recent messages instead of repeating the same event
 * Parse contract calls and multisig movements
 * Tracking oracles and creating relevant events
 * Handle known addresses in a better way
-* Fix database cache
 * Use an indexer node instead of a regular node
 
 ## Inner workings

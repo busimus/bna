@@ -1,3 +1,4 @@
+from decimal import Decimal
 import os
 import json
 import time
@@ -8,6 +9,7 @@ from collections import defaultdict
 from bna.config import Config
 from bna.pg_store import PgStore
 from bna.transfer import Transfer
+from bna.event import event_from_dict
 from bna.cex_listeners import Trade
 
 INTERESTING_ADDRESS_TYPES = ['premine', 'foundation']
@@ -21,7 +23,6 @@ class Database:
         self.oldest_cached_tf = self.oldest_cached_tf.replace(tzinfo=timezone.utc)
         self.oldest_cached_tr = self.oldest_cached_tr.replace(tzinfo=timezone.utc)
         self.cache_cleaned_at = datetime.now(tz=timezone.utc)
-        self.disable_transfer_cache = True  # WHY DOES IT BREAK IN SUBTLE WAYS
         self.test_cache = True
         self.conf_path = conf_path
         self.conf: Config = self.get_config()
@@ -29,8 +30,8 @@ class Database:
         self._load_known_addresses()
         # This is updated by the price oracle almost immediately.
         # @TODO: This probably shouldn't be in this class.
-        self.prices = {'cg:bitcoin': 20000, 'cg:idena': 0.02, 'cg:binancecoin': 300, 'cg:binance-usd': 1, 'cg:tether': 1,
-                       'ds:0x331ad6a9372d09d6ecb19399cda6634755c4460b': 0.0012}
+        self.prices = {'cg:bitcoin': 22000, 'cg:idena': 0.035, 'cg:binancecoin': 300, 'cg:binance-usd': 1, 'cg:tether': 1,
+                       'ds:0x331ad6a9372d09d6ecb19399cda6634755c4460b': 0.0013}
 
     def get_config(self) -> Config:
         if os.path.exists(self.conf_path):
@@ -67,18 +68,8 @@ class Database:
         for tf in self.cache['transfers'].values():
             if tf.timeStamp > after:
                 cached_tfs.append(tf)
-        # Previously there was a subtle bug that caused incorrect items to be returned from
-        # the cache. Or maybe caused by something else entirely. Instead of hunting it down,
-        # I'll keep watching whether the cached results match the canonical DB results.
-        fetched_tfs = await self.fetch_transfers(after)
-        cached_set = set([tf.hash for tf in cached_tfs])
-        fetched_set = set([tf.hash for tf in fetched_tfs])
-        diff_added = fetched_set - cached_set
-        diff_removed = cached_set - fetched_set
-        if diff_added or diff_removed:
-            self.log.warning(f"Transfer cache difference: {diff_added=}, {diff_removed=}")
         self.clean_cache()
-        return fetched_tfs
+        return cached_tfs
 
     async def recent_trades(self, start: datetime, period: int) -> list[Trade]:
         now = datetime.now(tz=timezone.utc)
@@ -92,15 +83,8 @@ class Database:
         for k, tr in self.cache['trades'].items():
             if tr.timeStamp > start:
                 cached_trs.append(tr)
-        fetched_trs = await self.fetch_trades(start)
-        cached_set = set([tr.id for tr in cached_trs])
-        fetched_set = set([tr.id for tr in fetched_trs])
-        diff_added = fetched_set - cached_set
-        diff_removed = cached_set - fetched_set
-        if diff_added or diff_removed:
-            self.log.warning(f"Trades cache difference: {diff_added=}, {diff_removed=}")
         self.clean_cache()
-        return fetched_trs
+        return cached_trs
 
     async def fetch_transfers(self, after: datetime) -> list[Trade]:
         self.log.debug(f'Fetching transfers since {after=}')
@@ -143,9 +127,16 @@ class Database:
         self.cache['identities'][ident['address'].lower()] = ident
         await self.store.insert_identities([ident])
 
-    async def insert_identities(self, idents: list[dict]):
-        self.cache['identities'].update(dict(map(lambda ident: (ident['address'], ident), idents)))
-        await self.store.insert_identities(idents)
+    async def insert_identities(self, idents: list[dict], full=False):
+        if not full:
+            self.cache['identities'].update(dict(map(lambda ident: (ident['address'].lower(), ident), idents)))
+        else:
+            del self.cache['identities']
+            self.cache['identities'] = dict(map(lambda ident: (ident['address'].lower(), ident), idents))
+        await self.store.insert_identities(idents, full=full)
+
+    async def insert_event(self, msg, ev):
+        await self.store.insert_event(chan_id=msg.channel.id, msg_id=msg.id, ev_dict=ev.to_dict())
 
     def get_identity(self, addr: str) -> dict:
         return self.cache['identities'].get(addr.lower())
@@ -154,7 +145,22 @@ class Database:
         return self.cache['identities']
 
     async def get_transfer(self, tx_hash: str) -> Transfer:
-        return await self.store.get_transfer_by_hash(tx_hash)
+        return (await self.store.get_transfers_by_hash([tx_hash]))[0]
+
+    async def get_transfers(self, tx_hashes: list[str]) -> list[Transfer]:
+        return await self.store.get_transfers_by_hash(tx_hashes)
+
+    async def get_event(self, ev_id: int):
+        self.log.debug(f"Getting event {ev_id=}")
+        chan_id, msg_id, ev_dict = await self.store.get_event(ev_id)
+        if not ev_dict:
+            return None, None, None
+        try:
+            ev = await event_from_dict(ev_dict, db=self)
+        except Exception as e:
+            self.log.error(f'Error parsing event {ev_dict=}: {e}', exc_info=True)
+            return None, None, None
+        return chan_id, msg_id, ev
 
     async def get_last_block(self, chain: str) -> int:
         return await self.store.get_latest_block(chain)
@@ -182,6 +188,16 @@ class Database:
     def ignored_addrs(self) -> list[str]:
         return [kv[0] for kv in self.known.items() if kv[1].get('ignored_sender')]
 
+    def count_alive_identities(self):
+        states = {'Newbie', 'Verified', 'Human', 'Suspended', 'Zombie'}
+        return sum(1 for _ in filter(lambda i: i.get('state') in states, self.cache['identities'].values()))
+
+    def count_identities_with_stake(self, stake: Decimal):
+        return sum(1 for _ in filter(lambda i: Decimal(i.get('stake', '0')) >= stake, self.cache['identities'].values()))
+
+    def count_identities_with_age(self, age: int):
+        return sum(1 for _ in filter(lambda i: i.get('age', 0) >= age, self.cache['identities'].values()))
+
     async def _remove_transfer(self, tf: Transfer):
         "For testing only"
         await self.store._remove_transfer(tf)
@@ -195,8 +211,6 @@ class Database:
             del self.cache['trades'][(tr.id, tr.market)]
 
     def clean_cache(self):
-        # if self.disable_transfer_cache:
-        #     return
         now = datetime.now(tz=timezone.utc)
         record_age_limit = timedelta(seconds=self.conf.db.cached_record_age_limit * 8)
         if now - timedelta(seconds=60) < self.cache_cleaned_at:

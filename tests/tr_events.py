@@ -1,326 +1,58 @@
+import json
+from datetime import datetime, timezone
 from decimal import Decimal
 from bna.transfer import Transfer
+from bna.event import *
 
-bridge_b = {
-		'type': 'transfer',
-		'by': '0xdc068f57bf8a16583d0e228deb242f47e3b999e0',
-		'amount': Decimal(
-			'40013.925619'
-		),
-		'tfs': [
-			Transfer(
-				changes={
-					'0xdc068f57bf8a16583d0e228deb242f47e3b999e0': Decimal(
-						'-40013.925619'
-					),
-					'0x0000000000000000000000000000000000000000': Decimal(
-						'40013.925619'
-					)
-				},
-				hash='0xc7308787c7d16fb068ed7b623eb6233035fd1642a388d86b31ad3a6fc935ae6f',
-				blockNumber=20170708,
-				logIndex=374,
-				timeStamp=1659689308,
-				chain='bsc',
-				tags=[
-					'bridge_burn'
-				],
-				meta={
-				}
-			)
-		],
-		'time': 1659685621
-	}
-bridge_i = {
-		'type': 'transfer',
-		'by': '0x98d16d7021930b788135dd834983394ff2de9869',
-		'amount': Decimal(
-			'36907.925618999999332352'
-		),
-		'tfs': [
-			Transfer(
-				changes={
-					'0x98d16d7021930b788135dd834983394ff2de9869': Decimal(
-						'-40012.925618999999332352'
-					),
-					'0x0bf957b7c580216667d009006d42378caf633f2b': Decimal(
-						'40012.925618999999332352'
-					)
-				},
-				hash='0x29a2e910d6bebdc1cdba2e45e6387894efc5b00f0f2d37e25a991834e702be05',
-				blockNumber=4767450,
-				logIndex=0,
-				timeStamp=1659689332,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			),
-			Transfer(
-				changes={
-					'0xb3c3cd8484c7d5d0533f97ea7cc0d717760e4e02': Decimal(
-						'-3105'
-					),
-					'0x98d16d7021930b788135dd834983394ff2de9869': Decimal(
-						'3105'
-					)
-				},
-				hash='0xe54a3b0ade207760153a037427cbcf4726892e22d1d6a22e1ec1841a4ad8de5d',
-				blockNumber=4767485,
-				logIndex=0,
-				timeStamp=1659690032,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			)
-		],
-		'time': 1659685621
-	}
-simple = {
-		'type': 'transfer',
-		'by': '0xb3c3cd8484c7d5d0533f97ea7cc0d717760e4e02',
-		'amount': Decimal(
-			'3105'
-		),
-		'tfs': [
-			Transfer(
-				changes={
-					'0xb3c3cd8484c7d5d0533f97ea7cc0d717760e4e02': Decimal(
-						'-3105'
-					),
-					'0x98d16d7021930b788135dd834983394ff2de9869': Decimal(
-						'3105'
-					)
-				},
-				hash='0xe54a3b0ade207760153a037427cbcf4726892e22d1d6a22e1ec1841a4ad8de5d',
-				blockNumber=4767485,
-				logIndex=0,
-				timeStamp=1659690032,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			)
-		],
-		'time': 1659685621
-	}
-multi1_recv = {
-		'type': 'transfer',
-		'by': '0x8ab52e639aea66264bf8008eaf8b34232ca449c4',
-		'amount': Decimal(
-			'391'
-		),
-		'tfs': [
-			Transfer(
-				changes={
-					'0x8ab52e639aea66264bf8008eaf8b34232ca449c4': Decimal(
-						'-391'
-					),
-					'0xf574f90696590563105c99e67559e4eaf38b8d5f': Decimal(
-						'391'
-					)
-				},
-				hash='0xcee8e4f382e173fada2c50a0355c5f897332c81f37362191b93734876e73e891',
-				blockNumber=4767567,
-				logIndex=1,
-				timeStamp=1659691675,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			)
-		],
-		'time': 1659685621
-	}
-multi1_send = {
-		'type': 'transfer',
-		'by': '0xf574f90696590563105c99e67559e4eaf38b8d5f',
-		'amount': Decimal(
-			'379'
-		),
-		'tfs': [
-			Transfer(
-				changes={
-					'0x8ab52e639aea66264bf8008eaf8b34232ca449c4': Decimal(
-						'-391'
-					),
-					'0xf574f90696590563105c99e67559e4eaf38b8d5f': Decimal(
-						'391'
-					)
-				},
-				hash='0xcee8e4f382e173fada2c50a0355c5f897332c81f37362191b93734876e73e891',
-				blockNumber=4767567,
-				logIndex=1,
-				timeStamp=1659691675,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			),
-			Transfer(
-				changes={
-					'0x468ee19d8633e2e8f005caf98810f202a2da9054': Decimal(
-						'-12'
-					),
-					'0xf574f90696590563105c99e67559e4eaf38b8d5f': Decimal(
-						'12'
-					)
-				},
-				hash='0x652fbcb0ea74a24c0445940c4eb76024b26ec3f852388df4a1e57f57c48aeae2',
-				blockNumber=4767573,
-				logIndex=0,
-				timeStamp=1659691792,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			),
-			Transfer(
-				changes={
-					'0x71aaaef55b56f106aae7f916d31e024830cdee1b': Decimal(
-						'-11'
-					),
-					'0xf574f90696590563105c99e67559e4eaf38b8d5f': Decimal(
-						'11'
-					)
-				},
-				hash='0x2f2c2eaf1290479b0beabde7c779af37f107a9c0d8ce2fc8c6cfcb6f52a03fb2',
-				blockNumber=4767574,
-				logIndex=0,
-				timeStamp=1659691812,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			),
-			Transfer(
-				changes={
-					'0x7506c7441468c8a99ad6361a2676695d26badbbe': Decimal(
-						'-10'
-					),
-					'0xf574f90696590563105c99e67559e4eaf38b8d5f': Decimal(
-						'10'
-					)
-				},
-				hash='0x992ee7364a13f6c985d80136335cb9c1da1fa7d4d7427160819f1f8e38600c06',
-				blockNumber=4767576,
-				logIndex=0,
-				timeStamp=1659691852,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			),
-			Transfer(
-				changes={
-					'0x1bc975f65f2d70aecac362da0e24e578cb4d58b3': Decimal(
-						'-12'
-					),
-					'0xf574f90696590563105c99e67559e4eaf38b8d5f': Decimal(
-						'12'
-					)
-				},
-				hash='0xf16eadfffd51f3552ae7e33bb7604e743817acfb355431cc61080c771b464825',
-				blockNumber=4767577,
-				logIndex=0,
-				timeStamp=1659691872,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			),
-			Transfer(
-				changes={
-					'0x902a22e29ecb787c1cca89d78de0c1af6e525c57': Decimal(
-						'-12'
-					),
-					'0xf574f90696590563105c99e67559e4eaf38b8d5f': Decimal(
-						'12'
-					)
-				},
-				hash='0x0406cfb777e7a698663de2a52bc729e4a9041cfd749edf9399c46991f0df8232',
-				blockNumber=4767579,
-				logIndex=0,
-				timeStamp=1659691912,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			),
-			Transfer(
-				changes={
-					'0xf574f90696590563105c99e67559e4eaf38b8d5f': Decimal(
-						'-827'
-					),
-					'0xfc698f346cfed9728521dfa6a7f47e6a6446b4d5': Decimal(
-						'827'
-					)
-				},
-				hash='0x2b9ffb43da952fc3eaf1298dad87e60b27b5c6d84cca5d7204e102d877e391d9',
-				blockNumber=4767592,
-				logIndex=0,
-				timeStamp=1659692170,
-				chain='idena',
-				tags=[
-					'send'
-				],
-				meta={
-				}
-			)
-		],
-		'time': 1659685621
-	}
+kill_pooled_tf_json = '{"changes": {"0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2": "868.636529693651223553"}, "hash": "0xf052ddf01e15d35bce31d74e73ce0cf3cc77e6d2dd5584e86b3430d87cb3d039", "blockNumber": 5533225, "logIndex": 0, "timeStamp": 1675001189.0, "chain": "idena", "signer": "0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2", "tags": ["kill"], "meta": {"age": 15, "pool": "0x171cf5e7c20cd103007b33ff88675f4b68cce39e", "usd_value": 27.98931918253769, "killedIdentity": "0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2"}}'
 
-withdraw_lp = {
-	'type': 'transfer',
-	'by': '0xc1bcdc9eb37d8e72ff0e0ca4bc8d19735b1b38ce',
-	'amount': Decimal(
-		'1109.532898033552727407'
-	),
-	'tfs': [
-		Transfer(
-			changes={
-				'0xc1bcdc9eb37d8e72ff0e0ca4bc8d19735b1b38ce': Decimal(
-					'-1109.532898033552727407'
-				),
-				'0x09784d03b42581cfc4fc90a7ab11c3125dedeb86': Decimal(
-					'1109.532898033552727407'
-				)
-			},
-			hash='0x781beb7989be955d97504a1a5ee985429fd5d20efdbbee71ab9c52747e9a271f',
-			blockNumber=20171806,
-			logIndex=148,
-			timeStamp=1659692615,
-			chain='bsc',
-			tags=[
-				'dex_withdraw_lp',
-				'dex_buy',
-				'dex'
-			],
-			meta={
-			}
-		)
-	],
-	'time': 1659686162
-}
+kill_pooled_event_json = '{"type": "kill", "id": 123, "by": "0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2", "time": "2023-01-29T14:06:29+00:00", "tfs": ["0xf052ddf01e15d35bce31d74e73ce0cf3cc77e6d2dd5584e86b3430d87cb3d039"], "amount": "868.636529693651223553", "killed": "0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2", "stake": "868.636529693651223553", "age": 15, "pool": "0x171cf5e7c20cd103007b33ff88675f4b68cce39e"}'
+
+kill_pooled_event_dict = {"type": "kill", "id": 123, "killed": "0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2", "stake": "868.636529693651223553", "amount": "868.636529693651223553", "time": "2023-01-29T14:06:29+00:00", "by": "0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2", "age": 15, "pool": "0x171cf5e7c20cd103007b33ff88675f4b68cce39e", "tfs": ["0xf052ddf01e15d35bce31d74e73ce0cf3cc77e6d2dd5584e86b3430d87cb3d039"]}
+
+kill_pooled_event = KillEvent(time=datetime(2023, 1, 29, 14, 6, 29, tzinfo=timezone.utc), amount=Decimal('868.636529693651223553'), by='0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2', tfs=[Transfer(changes={'0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2': Decimal('868.636529693651223553')}, hash='0xf052ddf01e15d35bce31d74e73ce0cf3cc77e6d2dd5584e86b3430d87cb3d039', blockNumber=5533225, logIndex=0, timeStamp=datetime(2023, 1, 29, 14, 6, 29, tzinfo=timezone.utc), chain='idena', signer='0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2', tags=['kill'], meta={'age': 15, 'pool': '0x171cf5e7c20cd103007b33ff88675f4b68cce39e', 'usd_value': 27.98931918253769, 'killedIdentity': '0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2'})], _recv=False, killed='0x660c241aeef6b726ce4a73a52b97e2c1baa67cc2', stake=Decimal('868.636529693651223553'), age=15, pool='0x171cf5e7c20cd103007b33ff88675f4b68cce39e')
+
+kill_delegator_tf = Transfer(changes={'0x7a9e8d758c68c8fbe54f5791c203b5bd8788bd82': Decimal('0')}, hash='0xb93da9e3e11c680ea1fd9109e3819e301f40845722c01353cef5e4877dd7f4dc', blockNumber=5424646, logIndex=0, timeStamp=datetime(2023, 1, 4, 15, 10, 50, tzinfo=timezone.utc), chain='idena', signer='0x7a9e8d758c68c8fbe54f5791c203b5bd8788bd82', tags=['killDelegator'], meta={'killedIdentity': '0x34605d3d9e5f32e13678ebe1a0bc7c00c26b8ef7', 'pool': '0x7a9e8d758c68c8fbe54f5791c203b5bd8788bd82', 'usd_value': 0.0, 'age': 7})
+
+kill_delegator_event = KillEvent(time=datetime(2023, 1, 4, 15, 10, 50, tzinfo=timezone.utc), amount=0, by='0x7a9e8d758c68c8fbe54f5791c203b5bd8788bd82', tfs=[Transfer(changes={'0x7a9e8d758c68c8fbe54f5791c203b5bd8788bd82': Decimal('0')}, hash='0xb93da9e3e11c680ea1fd9109e3819e301f40845722c01353cef5e4877dd7f4dc', blockNumber=5424646, logIndex=0, timeStamp=datetime(2023, 1, 4, 15, 10, 50, tzinfo=timezone.utc), chain='idena', signer='0x7a9e8d758c68c8fbe54f5791c203b5bd8788bd82', tags=['killDelegator'], meta={'age': 7, 'pool': '0x7a9e8d758c68c8fbe54f5791c203b5bd8788bd82', 'usd_value': 0.0, 'killedIdentity': '0x34605d3d9e5f32e13678ebe1a0bc7c00c26b8ef7'})], _recv=False, killed='0x34605d3d9e5f32e13678ebe1a0bc7c00c26b8ef7', stake=0, age=7, pool='0x7a9e8d758c68c8fbe54f5791c203b5bd8788bd82')
+
+stats_json = '{"type": "stats", "id": 1675159196303568384, "period": 172800, "invites_issued": 147, "invites_activated": 53, "identities_killed": 27, "contract_calls": 52, "bridged_to_bsc": 33793, "bridged_from_bsc": 0, "staked": 142316, "unstaked": 122938, "burned": 779, "markets": {"bitmart": {"quote_currency": "cg:tether", "buy": "1313034.57", "sell": "1050698.09", "buy_usd": 41324.18826507175, "sell_usd": 32725.188431001938, "quote_amount": "74013.84235647", "avg_price": "$0.031", "avg_price_usd": 0.03131227300318726}, "hotbit": {"quote_currency": "cg:bitcoin", "buy": "93302.82", "sell": "92028.66", "buy_usd": 2761.4897846648987, "sell_usd": 2720.8212338772014, "quote_amount": "0.2349725099", "avg_price": "126.785 sats", "avg_price_usd": 0.029055317582195428}, "bsc": {"quote_currency": "cg:tether", "buy": "933", "sell": "55263", "buy_usd": 31.3407206066867, "sell_usd": 1758.2912906568488, "quote_amount": "1789.6320112635353", "avg_price": "$0.032", "avg_price_usd": 0.03184586324475694}}}'
+
+stats_ev = StatsEvent(period=172800, invites_issued=147, invites_activated=53, identities_killed=27, contract_calls=52, bridged_to_bsc=33793, bridged_from_bsc=0, staked=142316, unstaked=122938, burned=779, markets={'bitmart': MarketStats(quote_currency='cg:tether', buy=Decimal('1313034.57'), sell=Decimal('1050698.09'), buy_usd=41324.18826507175, sell_usd=32725.188431001938, quote_amount=Decimal('74013.84235647'), avg_price='$0.031', avg_price_usd=0.03131227300318726), 'hotbit': MarketStats(quote_currency='cg:bitcoin', buy=Decimal('93302.82'), sell=Decimal('92028.66'), buy_usd=2761.4897846648987, sell_usd=2720.8212338772014, quote_amount=Decimal('0.2349725099'), avg_price='126.785 sats', avg_price_usd=0.029055317582195428), 'bsc': MarketStats(quote_currency='cg:tether', buy=933, sell=55263, buy_usd=31.3407206066867, sell_usd=1758.2912906568488, quote_amount=1789.6320112635353, avg_price='$0.032', avg_price_usd=0.03184586324475694)})
+
+mpe1_tf1 = Transfer(changes={'0xcafdfe29871ddf2bcf2f6a599d199f1909601684': Decimal('74.935695465729757808')}, hash='0x5da7fce9e59381028bb47a6542f1d000a1595a33577500dbace803c2e3e42240', blockNumber=5559034, logIndex=0, timeStamp=datetime(2023, 2, 4, 12, 7, 57, tzinfo=timezone.utc), chain='idena', signer='0xcafdfe29871ddf2bcf2f6a599d199f1909601684', tags=['kill'], meta={'age': 8, 'pool': '0x17b851a11f7d37054928bef47f0f22166d433917', 'usd_value': 2.071070503210975, 'killedIdentity': '0xcafdfe29871ddf2bcf2f6a599d199f1909601684'})
+mpe1_tf2 = Transfer(changes={'0x476bd4a891a0fc1747818f1c00bc27dca6d90037': Decimal('34.460342898287142578')}, hash='0x3883b1ea75b3e900d11250546efa6702d65c2148558d2b996f791fae70af25a0', blockNumber=5559038, logIndex=0, timeStamp=datetime(2023, 2, 4, 12, 9, 18, tzinfo=timezone.utc), chain='idena', signer='0x476bd4a891a0fc1747818f1c00bc27dca6d90037', tags=['kill'], meta={'age': 5, 'pool': '0x17b851a11f7d37054928bef47f0f22166d433917', 'usd_value': 0.9524139232125732, 'killedIdentity': '0x476bd4a891a0fc1747818f1c00bc27dca6d90037'})
+
+mpe1_pe1_json = '{"type": "pool", "id": 123456, "by": "0xcafdfe29871ddf2bcf2f6a599d199f1909601684", "time": "2023-02-04T12:07:57+00:00", "tfs": ["0x5da7fce9e59381028bb47a6542f1d000a1595a33577500dbace803c2e3e42240"], "amount": "74.935695465729757808", "subtype": "kill", "addr": "0xcafdfe29871ddf2bcf2f6a599d199f1909601684", "stake": "74.935695465729757808", "age": 8, "pool": "0x17b851a11f7d37054928bef47f0f22166d433917"}'
+mpe1_pe1 = PoolEvent(time=datetime(2023, 2, 4, 12, 7, 57, tzinfo=timezone.utc), amount=Decimal('74.935695465729757808'), by='0xcafdfe29871ddf2bcf2f6a599d199f1909601684', tfs=[mpe1_tf1], _recv=False, subtype='kill', addr='0xcafdfe29871ddf2bcf2f6a599d199f1909601684', stake=Decimal('74.935695465729757808'), age=8, pool='0x17b851a11f7d37054928bef47f0f22166d433917', _notified=False)
+mpe1_pe2 = PoolEvent(time=datetime(2023, 2, 4, 12, 9, 18, tzinfo=timezone.utc), amount=Decimal('34.460342898287142578'), by='0x476bd4a891a0fc1747818f1c00bc27dca6d90037', tfs=[mpe1_tf2], _recv=False, subtype='kill', addr='0x476bd4a891a0fc1747818f1c00bc27dca6d90037', stake=Decimal('34.460342898287142578'), age=5, pool='0x17b851a11f7d37054928bef47f0f22166d433917', _notified=False)
+
+mass_pool_event_1_json = '{"type": "mass_pool", "id": 456, "subtype": "kill", "pool": "0x17b851a11f7d37054928bef47f0f22166d433917", "count": 2, "stake": "109.396038364016900386", "age": 13, "changes": [{"type": "pool", "id": 123456, "by": "0xcafdfe29871ddf2bcf2f6a599d199f1909601684", "time": "2023-02-04T12:07:57+00:00", "tfs": ["0x5da7fce9e59381028bb47a6542f1d000a1595a33577500dbace803c2e3e42240"], "amount": "74.935695465729757808", "subtype": "kill", "addr": "0xcafdfe29871ddf2bcf2f6a599d199f1909601684", "stake": "74.935695465729757808", "age": 8, "pool": "0x17b851a11f7d37054928bef47f0f22166d433917"}, {"type": "pool", "id": 123456, "by": "0x476bd4a891a0fc1747818f1c00bc27dca6d90037", "time": "2023-02-04T12:09:18+00:00", "tfs": ["0x3883b1ea75b3e900d11250546efa6702d65c2148558d2b996f791fae70af25a0"], "amount": "34.460342898287142578", "subtype": "kill", "addr": "0x476bd4a891a0fc1747818f1c00bc27dca6d90037", "stake": "34.460342898287142578", "age": 5, "pool": "0x17b851a11f7d37054928bef47f0f22166d433917"}]}'
+mass_pool_event_1 = MassPoolEvent(subtype='kill', pool='0x17b851a11f7d37054928bef47f0f22166d433917', count=2, stake=Decimal('109.396038364016900386'), age=13, changes=[mpe1_pe1, mpe1_pe2])
+
+mpe2_tf1 = Transfer(changes={'0x216fcd8c69d9d6d8d983288f256f8eb5b5265027': Decimal('93.685471495047770461')}, hash='0xe7692a6cc3cff4a24146cf302564db7b102f7ee18f527dd701fab73750c89755', blockNumber=5559042, logIndex=0, timeStamp=datetime(2023, 2, 4, 12, 10, 38, tzinfo=timezone.utc), chain='idena', signer='0x216fcd8c69d9d6d8d983288f256f8eb5b5265027', tags=['kill'], meta={'age': 7, 'pool': '0x17b851a11f7d37054928bef47f0f22166d433917', 'usd_value': 2.589276250615985, 'killedIdentity': '0x216fcd8c69d9d6d8d983288f256f8eb5b5265027'})
+mpe2_tf2 = Transfer(changes={'0xdb0bca680d870357ff624bdea04f6dae0e5f565b': Decimal('54.601380862882317254')}, hash='0x28a1628f26e9f409557d12e41f473be6b9b3becc866846c2ffdd985d18bb9fd2', blockNumber=5559044, logIndex=0, timeStamp=datetime(2023, 2, 4, 12, 11, 18, tzinfo=timezone.utc), chain='idena', signer='0xdb0bca680d870357ff624bdea04f6dae0e5f565b', tags=['kill'], meta={'age': 7, 'pool': '0x17b851a11f7d37054928bef47f0f22166d433917', 'usd_value': 1.5090713262469155, 'killedIdentity': '0xdb0bca680d870357ff624bdea04f6dae0e5f565b'})
+
+mpe2_pe1 = PoolEvent(time=datetime(2023, 2, 4, 12, 10, 38, tzinfo=timezone.utc), amount=Decimal('93.685471495047770461'), by='0x216fcd8c69d9d6d8d983288f256f8eb5b5265027', tfs=[mpe2_tf1], _recv=False, subtype='kill', addr='0x216fcd8c69d9d6d8d983288f256f8eb5b5265027', stake=Decimal('93.685471495047770461'), age=7, pool='0x17b851a11f7d37054928bef47f0f22166d433917', _notified=False)
+mpe2_pe2 = PoolEvent(time=datetime(2023, 2, 4, 12, 11, 18, tzinfo=timezone.utc), amount=Decimal('54.601380862882317254'), by='0xdb0bca680d870357ff624bdea04f6dae0e5f565b', tfs=[mpe2_tf2], _recv=False, subtype='kill', addr='0xdb0bca680d870357ff624bdea04f6dae0e5f565b', stake=Decimal('54.601380862882317254'), age=7, pool='0x17b851a11f7d37054928bef47f0f22166d433917', _notified=False)
+
+mass_pool_event_2_json = '{"type": "mass_pool", "id": 789, "subtype": "kill", "pool": "0x17b851a11f7d37054928bef47f0f22166d433917", "count": 2, "stake": "148.286852357930087715", "age": 14, "changes": [{"type": "pool", "id": 123456, "by": "0x216fcd8c69d9d6d8d983288f256f8eb5b5265027", "time": "2023-02-04T12:10:38+00:00", "tfs": ["0xe7692a6cc3cff4a24146cf302564db7b102f7ee18f527dd701fab73750c89755"], "amount": "93.685471495047770461", "subtype": "kill", "addr": "0x216fcd8c69d9d6d8d983288f256f8eb5b5265027", "stake": "93.685471495047770461", "age": 7, "pool": "0x17b851a11f7d37054928bef47f0f22166d433917"}, {"type": "pool", "id": 123456, "by": "0xdb0bca680d870357ff624bdea04f6dae0e5f565b", "time": "2023-02-04T12:11:18+00:00", "tfs": ["0x28a1628f26e9f409557d12e41f473be6b9b3becc866846c2ffdd985d18bb9fd2"], "amount": "54.601380862882317254", "subtype": "kill", "addr": "0xdb0bca680d870357ff624bdea04f6dae0e5f565b", "stake": "54.601380862882317254", "age": 7, "pool": "0x17b851a11f7d37054928bef47f0f22166d433917"}]}'
+mass_pool_event_2 = MassPoolEvent(subtype='kill', pool='0x17b851a11f7d37054928bef47f0f22166d433917', count=2, stake=Decimal('148.286852357930087715'), age=14, changes=[mpe2_pe1, mpe2_pe2])
+
+mass_pool_joined_json = '{"type": "mass_pool", "id": 789, "subtype": "kill", "pool": "0x17b851a11f7d37054928bef47f0f22166d433917", "count": 4, "stake": "257.682890721946988101", "age": 27, "changes": [{"type": "pool", "id": 123456, "by": "0x476bd4a891a0fc1747818f1c00bc27dca6d90037", "time": "2023-02-04T12:09:18+00:00", "tfs": ["0x3883b1ea75b3e900d11250546efa6702d65c2148558d2b996f791fae70af25a0"], "amount": "34.460342898287142578", "subtype": "kill", "addr": "0x476bd4a891a0fc1747818f1c00bc27dca6d90037", "stake": "34.460342898287142578", "age": 5, "pool": "0x17b851a11f7d37054928bef47f0f22166d433917"}, {"type": "pool", "id": 123456, "by": "0xdb0bca680d870357ff624bdea04f6dae0e5f565b", "time": "2023-02-04T12:11:18+00:00", "tfs": ["0x28a1628f26e9f409557d12e41f473be6b9b3becc866846c2ffdd985d18bb9fd2"], "amount": "54.601380862882317254", "subtype": "kill", "addr": "0xdb0bca680d870357ff624bdea04f6dae0e5f565b", "stake": "54.601380862882317254", "age": 7, "pool": "0x17b851a11f7d37054928bef47f0f22166d433917"}, {"type": "pool", "id": 123456, "by": "0xcafdfe29871ddf2bcf2f6a599d199f1909601684", "time": "2023-02-04T12:07:57+00:00", "tfs": ["0x5da7fce9e59381028bb47a6542f1d000a1595a33577500dbace803c2e3e42240"], "amount": "74.935695465729757808", "subtype": "kill", "addr": "0xcafdfe29871ddf2bcf2f6a599d199f1909601684", "stake": "74.935695465729757808", "age": 8, "pool": "0x17b851a11f7d37054928bef47f0f22166d433917"}, {"type": "pool", "id": 123456, "by": "0x216fcd8c69d9d6d8d983288f256f8eb5b5265027", "time": "2023-02-04T12:10:38+00:00", "tfs": ["0xe7692a6cc3cff4a24146cf302564db7b102f7ee18f527dd701fab73750c89755"], "amount": "93.685471495047770461", "subtype": "kill", "addr": "0x216fcd8c69d9d6d8d983288f256f8eb5b5265027", "stake": "93.685471495047770461", "age": 7, "pool": "0x17b851a11f7d37054928bef47f0f22166d433917"}]}'
+mass_pool_joined_event = MassPoolEvent(subtype='kill', pool='0x17b851a11f7d37054928bef47f0f22166d433917', count=4, stake=Decimal('257.682890721946988101'), age=27, changes=[PoolEvent(id=123456, time=datetime(2023, 2, 4, 12, 9, 18, tzinfo=timezone.utc), amount=Decimal('34.460342898287142578'), by='0x476bd4a891a0fc1747818f1c00bc27dca6d90037', tfs=[Transfer(changes={'0x476bd4a891a0fc1747818f1c00bc27dca6d90037': Decimal('34.460342898287142578')}, hash='0x3883b1ea75b3e900d11250546efa6702d65c2148558d2b996f791fae70af25a0', blockNumber=5559038, logIndex=0, timeStamp=datetime(2023, 2, 4, 12, 9, 18, tzinfo=timezone.utc), chain='idena', signer='0x476bd4a891a0fc1747818f1c00bc27dca6d90037', tags=['kill'], meta={'age': 5, 'pool': '0x17b851a11f7d37054928bef47f0f22166d433917', 'usd_value': 0.9524139232125732, 'killedIdentity': '0x476bd4a891a0fc1747818f1c00bc27dca6d90037'})], _recv=False, subtype='kill', addr='0x476bd4a891a0fc1747818f1c00bc27dca6d90037', stake=Decimal('34.460342898287142578'), age=5, pool='0x17b851a11f7d37054928bef47f0f22166d433917', _notified=False), PoolEvent(id=123456, time=datetime(2023, 2, 4, 12, 11, 18, tzinfo=timezone.utc), amount=Decimal('54.601380862882317254'), by='0xdb0bca680d870357ff624bdea04f6dae0e5f565b', tfs=[Transfer(changes={'0xdb0bca680d870357ff624bdea04f6dae0e5f565b': Decimal('54.601380862882317254')}, hash='0x28a1628f26e9f409557d12e41f473be6b9b3becc866846c2ffdd985d18bb9fd2', blockNumber=5559044, logIndex=0, timeStamp=datetime(2023, 2, 4, 12, 11, 18, tzinfo=timezone.utc), chain='idena', signer='0xdb0bca680d870357ff624bdea04f6dae0e5f565b', tags=['kill'], meta={'age': 7, 'pool': '0x17b851a11f7d37054928bef47f0f22166d433917', 'usd_value': 1.5090713262469155, 'killedIdentity': '0xdb0bca680d870357ff624bdea04f6dae0e5f565b'})], _recv=False, subtype='kill', addr='0xdb0bca680d870357ff624bdea04f6dae0e5f565b', stake=Decimal('54.601380862882317254'), age=7, pool='0x17b851a11f7d37054928bef47f0f22166d433917', _notified=False), PoolEvent(id=123456, time=datetime(2023, 2, 4, 12, 7, 57, tzinfo=timezone.utc), amount=Decimal('74.935695465729757808'), by='0xcafdfe29871ddf2bcf2f6a599d199f1909601684', tfs=[Transfer(changes={'0xcafdfe29871ddf2bcf2f6a599d199f1909601684': Decimal('74.935695465729757808')}, hash='0x5da7fce9e59381028bb47a6542f1d000a1595a33577500dbace803c2e3e42240', blockNumber=5559034, logIndex=0, timeStamp=datetime(2023, 2, 4, 12, 7, 57, tzinfo=timezone.utc), chain='idena', signer='0xcafdfe29871ddf2bcf2f6a599d199f1909601684', tags=['kill'], meta={'age': 8, 'pool': '0x17b851a11f7d37054928bef47f0f22166d433917', 'usd_value': 2.071070503210975, 'killedIdentity': '0xcafdfe29871ddf2bcf2f6a599d199f1909601684'})], _recv=False, subtype='kill', addr='0xcafdfe29871ddf2bcf2f6a599d199f1909601684', stake=Decimal('74.935695465729757808'), age=8, pool='0x17b851a11f7d37054928bef47f0f22166d433917', _notified=False), PoolEvent(id=123456, time=datetime(2023, 2, 4, 12, 10, 38, tzinfo=timezone.utc), amount=Decimal('93.685471495047770461'), by='0x216fcd8c69d9d6d8d983288f256f8eb5b5265027', tfs=[Transfer(changes={'0x216fcd8c69d9d6d8d983288f256f8eb5b5265027': Decimal('93.685471495047770461')}, hash='0xe7692a6cc3cff4a24146cf302564db7b102f7ee18f527dd701fab73750c89755', blockNumber=5559042, logIndex=0, timeStamp=datetime(2023, 2, 4, 12, 10, 38, tzinfo=timezone.utc), chain='idena', signer='0x216fcd8c69d9d6d8d983288f256f8eb5b5265027', tags=['kill'], meta={'age': 7, 'pool': '0x17b851a11f7d37054928bef47f0f22166d433917', 'usd_value': 2.589276250615985, 'killedIdentity': '0x216fcd8c69d9d6d8d983288f256f8eb5b5265027'})], _recv=False, subtype='kill', addr='0x216fcd8c69d9d6d8d983288f256f8eb5b5265027', stake=Decimal('93.685471495047770461'), age=7, pool='0x17b851a11f7d37054928bef47f0f22166d433917', _notified=False)])
+
+
+dex_arb_tf = Transfer(changes={'0xaa4dce8585528265c6bac502ca9578343f82630f': Decimal('-1378.628159834136521912'), '0xc1bcdc9eb37d8e72ff0e0ca4bc8d19735b1b38ce': Decimal('1378.628159834136521912')}, hash='0xd5475770022da030d29d00576655710fdb963a3e0d7e48de43dea99a90a6155d', blockNumber=25382778, logIndex=283, timeStamp=datetime(2023, 2, 4, 18, 51, 31, tzinfo=timezone.utc), chain='bsc', signer='0x897d88bf725ba531ac85d92fb94f1b676f5f3571', tags=[ 'dex', 'dex_arb' ], meta={'token': {'0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c': Decimal('0.117982364081413493'),  '0xe9e7cea3dedca5984780bafc599bd69add087d56': Decimal('-39.331337158164185919')}, 'usd_value': -0.3006465289824831})
+dex_buy_tf = Transfer(changes={'0x09784d03b42581cfc4fc90a7ab11c3125dedeb86': Decimal('17176.226396314790863921'), '0x3169de0e661d684e0d235f19cf72327173e0be11': Decimal('92.758599249573693385'), '0xaa4dce8585528265c6bac502ca9578343f82630f': Decimal('-5197.528408759399682118'), '0xc1bcdc9eb37d8e72ff0e0ca4bc8d19735b1b38ce': Decimal('-12071.456586804964875188')}, hash='0x74423c39b86850995f6ba3d0f1c964d1ac318d66486ab54c2fa35166e729d435', blockNumber=25382831, logIndex=23, timeStamp=datetime(2023, 2, 4, 18, 54, 10, tzinfo=timezone.utc), chain='bsc', signer='0x55dcad916750c19c4ec69d65ff0317767b36ce90', tags=[ 'dex', 'dex_buy' ], meta={'token': {'0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c': Decimal('0.4524787796174851'),  '0xe9e7cea3dedca5984780bafc599bd69add087d56': Decimal('350')}, 'usd_price': 0.028928795276561108, 'usd_value': 499.5709315706871})
+dex_sell_tf = Transfer(changes={'0x865f0788353c97f3fab89d06391273758d54fc28': Decimal('-5000'), '0xc1bcdc9eb37d8e72ff0e0ca4bc8d19735b1b38ce': Decimal('5000')}, hash='0xac923feb76ebdd993162867f514d62b8c8304b20375d00ec8876423ae6acfcb3', blockNumber=25383798, logIndex=167, timeStamp=datetime(2023, 2, 4, 19, 42, 56, tzinfo=timezone.utc), chain='bsc', signer='0x865f0788353c97f3fab89d06391273758d54fc28', tags=[ 'dex', 'dex_sell' ], meta={'token': {'0xe9e7cea3dedca5984780bafc599bd69add087d56': Decimal('-145.156808162240907836')}, 'usd_value': 145.1549211237348, 'usd_price': 0.02903098422474696})
+
+from disnake import Color
+dex_json = '{"type": "dex", "id": 1676454700478695424, "by": "", "time": "2023-02-04T19:42:56+00:00", "tfs": ["0xd5475770022da030d29d00576655710fdb963a3e0d7e48de43dea99a90a6155d", "0x74423c39b86850995f6ba3d0f1c964d1ac318d66486ab54c2fa35166e729d435", "0xac923feb76ebdd993162867f514d62b8c8304b20375d00ec8876423ae6acfcb3"], "amount": "23647.613155398501079218", "buy_usd": 499.5709315706871, "sell_usd": 145.1549211237348, "lp_usd": 0, "avg_price": 0.02895173950778813, "last_price": 0.02903098422474696, "_color": [106, 255, 79]}'
+dex_event = DexEvent(time=datetime(2023, 2, 4, 19, 42, 56, tzinfo=timezone.utc), amount=Decimal('23647.613155398501079218'), by='', tfs=[dex_arb_tf, dex_buy_tf, dex_sell_tf], _recv=False, buy_usd=499.5709315706871, sell_usd=145.1549211237348, avg_price=0.02895173950778813, last_price=0.02903098422474696, _color=Color.from_rgb(106, 255, 79))
+
+
+top_kill_json = '{"type": "top_kill", "id": 456, "period": 123, "total_usd_value": 868.6365296936513, "_tfs": ["0xf052ddf01e15d35bce31d74e73ce0cf3cc77e6d2dd5584e86b3430d87cb3d039", "0xb93da9e3e11c680ea1fd9109e3819e301f40845722c01353cef5e4877dd7f4dc"], "_long": false, "total_idna": "868.636529693651223553", "total_age": 22}'
+
+top_stake_idents = [{"stake": Decimal("198"), "stake_usd": 5.71047246, "signer": "0xbd1666a429a3351d6717cfaba5db87b252b935ad"}, {"stake": Decimal("44"), "stake_usd": 1.26899388, "signer": "0xaca891c6b5c3b8e9c78552630ddf9431332d2a2a"}]
+top_stake_json = '{"type": "top_stake", "id": 567, "period": 3600, "total_usd_value": 6.97946634, "_tfs": [], "_long": false, "total_idna": "242", "_identities": [{"stake": "198", "stake_usd": 5.71047246, "signer": "0xbd1666a429a3351d6717cfaba5db87b252b935ad"}, {"stake": "44", "stake_usd": 1.26899388, "signer": "0xaca891c6b5c3b8e9c78552630ddf9431332d2a2a"}]}'

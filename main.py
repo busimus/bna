@@ -16,21 +16,21 @@ from bna.cex_listeners import hotbit_trades, bitmart_trades, probit_trades, vite
 from bna.oracle import Oracle
 
 # TODO:
+# - Contract events (built-in for old contracts and WASM ones)
+# - Pool events should be edited more often than on MassPoolEvents
 # - Persistence of tracker state (and others)
 # - Important oracle events
-# - Show current stake after replenishment
-# - Bridge destination decoding needs TX data, but we're getting the signer anyway?
+# - Bridge to Idena destination decoding needs TX data, but we're getting the signer anyway?
 # - Old address movement notifications
 # - Moving average volume detection?
 # - Active exchange address tagging?
-# - Interesting addresses are all multisigs, do their transfers work? (hint: they don't)
 # BUGS:
 # - None (as a 10x engineer)
 # - Signer field breaks MEV bots. But without signer buyer addresses would be pools
 # - Plenty of memory leaks (some tagged with todo, others left as an exercise to the reader)
 # - Removed logs don't remove notifications or roll back state, but there's a time buffer before finality
+# - Impossible to tell which pool the node undelegated from unless you catch the TX live
 # HARD-CODED:
-# - Replenished stake always assumes self-replenish
 # - No separation of transfers between chains
 # - Assumption (stemming from no chain separation) that zero address is the bridge
 # - Stored invites don't identify the sender and the recepient, but it's not needed anywhere
@@ -64,6 +64,7 @@ async def main(db: Database, bot: Bot, conf: Config, log: Logger):
                     trades=trade_event_chan, event_chan=tracker_event_chan, db=db, log=log)
         bot.tracker = t  # @TODO: DIRTY
         bot.bsc_listener = bsc  # @TODO: DIRTY
+        bot.idena_listener = idna  # @TODO: DIRTY
         asyncio.create_task(t.run(), name="tracker_run")
 
         if not passive:

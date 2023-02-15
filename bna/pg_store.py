@@ -49,9 +49,17 @@ class PgStore:
         rows = await (await self.conn.execute('SELECT * from public."Transfers" WHERE time > (%s) AND time < (%s)', (after, until))).fetchall()
         return dict(map(lambda r: ((r[0], r[1]), Transfer.from_dict(r[3])), rows))
 
-    async def get_transfer_by_hash(self, hash: str) -> Transfer:
-        tf = await (await self.conn.execute(f'select * from public."Transfers" where data ->> \'hash\' = %s', (hash,))).fetchone()
-        return Transfer.from_dict(tf[3])
+    async def get_transfers_by_hash(self, hashes: list[str]) -> list[Transfer]:
+        if len(hashes) == 0:
+            return []
+        placeholders = ', '.join(['%s'] * len(hashes))
+        query = f'SELECT * FROM public."Transfers" WHERE data->>\'hash\' IN ({placeholders})'
+        rows = await (await self.conn.execute(query, tuple(hashes))).fetchall()
+        hashes = {h: None for h in hashes}
+        for row in rows:
+            tf = Transfer.from_dict(row[3])
+            hashes[tf.hash] = tf
+        return list(hashes.values())
 
     async def get_trades(self, after: datetime.datetime, until=datetime.datetime.max) -> dict[(int, str), Trade]:
         rows = await (await self.conn.execute('SELECT * from public."Trades" WHERE time > (%s) AND time < (%s)', (after, until))).fetchall()
@@ -66,10 +74,19 @@ class PgStore:
         return dict(map(lambda r: (r[0], r[2]), rows))
 
     async def get_latest_block(self, chain: str) -> int:
-        tf = await (await self.conn.execute(f'select * from public."Transfers" where data ->> \'chain\' = %s order by "time" desc limit 1', (chain,))).fetchone()
+        tf = await (await self.conn.execute(f'select (data) from public."Transfers" where data ->> \'chain\' = %s order by "time" desc limit 1', (chain,))).fetchone()
         if tf is None:
             return None
-        return tf[3]['blockNumber']
+        return tf[0]['blockNumber']
+
+    async def get_event(self, ev_id):
+        row = await (await self.conn.execute('SELECT (channel, message, event) from public."Events" WHERE id = (%s)', (ev_id,))).fetchone()
+        if not row:
+            self.log.warning(f"Event not found")
+            return None, None, None
+        row = row[0]
+        ev = ev if type(row[2]) == dict else json.loads(row[2])  # why not done automatically?
+        return row[0], row[1], ev
 
     async def insert_transfers(self, tfs: list[Transfer]):
         cur = self.conn.cursor()
@@ -99,18 +116,35 @@ ON CONFLICT (id, market) DO UPDATE
             """, seq)
         await self.conn.commit()
 
-    async def insert_identities(self, idents: list[dict]):
+    async def insert_identities(self, idents: list[dict], full=False):
         cur = self.conn.cursor()
         seq = map(lambda ident: (ident['address'].lower(), datetime.datetime.fromtimestamp(ident['_fetchTime'], tz=datetime.timezone.utc),
                               json.dumps(ident)), idents)
-        await cur.executemany(\
-            """
+
+        if full:
+            self.log.debug("Dropping identities")
+            await cur.execute('DELETE FROM public."Identities";')
+
+        await cur.executemany("""
 INSERT INTO public."Identities" (address, fetch_time, data)
 VALUES (%s, %s, %s)
 ON CONFLICT (address) DO UPDATE
   SET fetch_time = excluded.fetch_time,
       data = excluded.data;
-            """, seq)
+        """, seq)
+        await self.conn.commit()
+
+    async def insert_event(self, ev_dict: dict, chan_id: int, msg_id: int):
+        cur = self.conn.cursor()
+
+        await cur.execute("""
+INSERT INTO public."Events" (id, channel, message, event)
+VALUES (%s, %s, %s, %s)
+ON CONFLICT (id) DO UPDATE
+  SET event = excluded.event,
+      channel = excluded.channel,
+      message = excluded.message;
+        """, (ev_dict['id'], chan_id, msg_id, json.dumps(ev_dict)))
         await self.conn.commit()
 
     async def close(self):

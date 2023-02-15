@@ -116,13 +116,13 @@ class Transfer:
         else:
             return send[0] if len(send) > 0 else self.signer
 
-    def to(self, single=False) -> list[str] | str:
+    def to(self, single=False) -> list[str] | str | None:
         "Returns a list of receiving addresses or only the first receiver if `single`"
         recv = [ch[0] for ch in self.changes.items() if ch[1] > 0]
         if not single:
             return recv
         else:
-            return recv[0]
+            return recv[0] if len(recv) > 0 else None
 
     def should_store(self):
         if any_in(self.tags, IDENA_STATS_TAGS):

@@ -15,23 +15,25 @@ from bna.cex_listeners import MARKETS
 from bna.database import Database
 from bna.config import Config, DiscordBotConfig
 from bna.tags import *
+from bna.event import *
 from bna.tracker import Tracker
 from bna.transfer import CHAIN_BSC, CHAIN_IDENA, Transfer
-from bna.utils import any_in, average_color, shorten
+from bna.utils import any_in, average_color, shorten, get_identity_color, trade_color
 
 MAX_PUBLISH_ATTEMPTS = 3
-
 
 
 class Bot:
     def __init__(self, bot: commands.InteractionBot, conf: DiscordBotConfig, db: Database, dev_user: int, log: Logger):
         from bna.bsc_listener import BscListener
+        from bna.idena_listener import IdenaListener
         self.disbot = bot
         self.conf = conf
         self.db = db
         self.dev_user = dev_user
         self.tracker: Tracker = None
         self.bsc_listener: BscListener = None
+        self.idena_listener: IdenaListener = None
         self.log = log.getChild('DI')
         self.stopped = False
         # For ratelimiting
@@ -39,6 +41,9 @@ class Bot:
         self.user_cmd_times = defaultdict(lambda: deque(maxlen=queue_size))  # TODO: leaks slowly
         self.activity = {'block': {CHAIN_IDENA: 0, CHAIN_BSC: 0}}
         self.last_activity_update = time.time()
+        # Cache of events and messages. Items and their buttons are removed after two days
+        self.ev_to_msg: dict[int, (Event, disnake.Message)] = {}
+        self.event_cache_cleaned_at = datetime.now(tz=timezone.utc)
 
     async def run_publisher(self, tracker_event_chan: asyncio.Queue):
         self.log.info("Publisher started")
@@ -48,9 +53,11 @@ class Bot:
                 ev = await tracker_event_chan.get()
             except asyncio.CancelledError:
                 break
-            if datetime.now() - start < timedelta(seconds=5) and ev['type'] != 'block':
+            if datetime.now() - start < timedelta(seconds=5) and type(ev) != BlockEvent:
                 self.log.warning(f"Not publishing old event: {ev}")
-                continue
+                import sys
+                if '-old' not in sys.argv:
+                    continue
             try:
                 await self.publish_event(ev)
             except Exception as e:
@@ -65,6 +72,10 @@ class Bot:
             await msg.response.send_message(**resp)
         else:
             await msg.followup.send(**resp)
+        msg_resp = await msg.original_response()
+        if not msg_resp:
+            self.log.warning(f"Resp to {msg} is None")
+        return msg_resp
 
     async def ratelimit(self, msg: disnake.CommandInteraction) -> bool:
         "Log user's time of request, and ratelimit them by sleeping if needed. Returns False if the command should not be executed (like when the bot is stopped), but will still ratelimit."
@@ -82,39 +93,92 @@ class Bot:
         times.append(time.time())
         return not self.stopped
 
-    async def publish_event(self, ev: dict):
+    async def publish_event(self, ev: Event):
         attempt = 0
         while attempt < MAX_PUBLISH_ATTEMPTS:
             try:
+                if type(ev) != BlockEvent:
+                    self.log.debug(f"Publishing event {ev=}")
+                if type(ev) in [DexEvent, MassPoolEvent, PoolEvent, CexEvent, TransferEvent]:
+                    try:
+                        if await self.replace_recent(ev):
+                            await asyncio.sleep(0.5)
+                            break
+                    except disnake.errors.NotFound:
+                        self.log.warning(f"Message not found for event {ev=}, publishing new one")
+                        pass
                 await self._publish_event(ev)
-                if ev['type'] != 'block':
+                if type(ev) != BlockEvent:
                     await asyncio.sleep(0.5)
                 break
             except Exception as e:
                 self.log.error(f"Publish error: {e}", exc_info=True)
+                if ev.id in self.ev_to_msg:
+                    self.log.warning(f"Error happened but event got published: {ev['_id']}")
+                    break
                 await asyncio.sleep(5)
                 attempt += 1
 
-    async def _publish_event(self, ev: dict):
+    async def _publish_event(self, ev: Event):
         msg = None
-        if ev['type'] == 'stats':
+        if type(ev) == StatsEvent:
             msg = self.build_stats_message(ev)
-        elif ev['type'] in ['transfer', 'dex', 'interesting_transfer']:
+        elif type(ev) in [TransferEvent, DexEvent, InterestingTransferEvent]:
             msg = self.build_transfer_message(ev)
-        elif ev['type'] == 'kill':
+        elif type(ev) == KillEvent:
             msg = self.build_kill_message(ev)
-        elif ev['type'] == 'mass_pool':
+        elif type(ev) == MassPoolEvent:
             msg = self.build_mass_pool_message(ev)
-        elif ev['type'] == 'cex_trade':
+        elif type(ev) == CexEvent:
             msg = self.build_cex_trade_message(ev)
-        elif ev['type'] == 'block':
+        elif type(ev) == ClubEvent:
+            msg = self.build_club_message(ev)
+        elif type(ev) == BlockEvent:
             await self.update_activity(ev)
         else:
-            self.log.warning(f"Unknown event type: {ev['type']}")
+            self.log.warning(f"Unknown event type: {ev=}")
         if msg:
-            await self.send_notification(msg)
+            sent_msg = await self.send_notification(msg)
+            await self.save_event(ev, sent_msg)
+        await self.clean_event_cache()
 
-    async def send_notification(self, msg: dict):
+    async def replace_recent(self, new_ev: DexEvent | MassPoolEvent | TransferEvent) -> bool:
+        for ev_id, (ev, msg) in self.ev_to_msg.items():
+            if new_ev.id == ev.id:
+                self.log.warning(f"Event {ev_id} already published, {ev=}")
+                # continue
+            if type(ev) != type(new_ev):
+                continue
+            if type(ev) in [MassPoolEvent, PoolEvent]:
+                if datetime.now(tz=timezone.utc) - msg.created_at > timedelta(seconds=self.conf.pool_event_replace_period):
+                    continue
+            else:
+                if datetime.now(tz=timezone.utc) - msg.created_at > timedelta(seconds=self.conf.event_replace_period):
+                    continue
+
+            if type(ev) in [MassPoolEvent, PoolEvent] and ev.can_join(new_ev):
+                ev.join(new_ev)
+                await msg.edit(**self.build_mass_pool_message(ev))
+                await self.save_event(ev, msg)
+                return True
+            elif type(ev) == DexEvent and ev.can_join(new_ev):
+                ev.join(new_ev, self.db.known)
+                await msg.edit(**self.build_transfer_message(ev))
+                await self.save_event(ev, msg)
+                return True
+            elif type(ev) == CexEvent:
+                ev.join(new_ev, self.db.prices)
+                await msg.edit(**self.build_cex_trade_message(ev))
+                await self.save_event(ev, msg)
+                return True
+            elif type(ev) == TransferEvent and ev.can_join(new_ev):
+                ev.join(new_ev)
+                await msg.edit(**self.build_transfer_message(ev))
+                await self.save_event(ev, msg)
+                return True
+        return False
+
+    async def send_notification(self, msg: dict) -> disnake.Message:
         if self.stopped:
             self.log.warning("Stopped, not sending the notification")
             return
@@ -122,62 +186,70 @@ class Bot:
         if channel is None:
             self.log.warning("No channel, can't send messages yet")
             return
-        await channel.send(**msg)
+        return await channel.send(**msg)
 
-    def build_stats_message(self, ev: dict, usd = True) -> dict:
+    def build_stats_message(self, ev: StatsEvent, usd = True) -> dict:
+        self.log.debug(ev)
+        self.log.debug(ev.to_dict())
         color = Color.blurple()
-        hours = int(round(ev['period'] / (60 * 60), 0))
+        hours = int(round(ev.period / (60 * 60), 0))
         embeds = []
         ce = Embed(color=color, title=f"Chain stats for the past {hours} hours")
         embeds.append(ce)
-        s = ev['stats']
-        ce.add_field('Stake +/-', f"{s['staked']:,}/{s['unstaked']:,} iDNA", inline=True)
-        ce.add_field('Bridged to/from BSC', f"{s['bridged_to_bsc']:,}/{s['bridged_from_bsc']:,} iDNA", inline=True)
-        ce.add_field('Burned', f"{s['burned']:,} iDNA", inline=True)
-        ce.add_field('Terminated', f"{s['identities_killed']:,} identities", inline=True)
-        ce.add_field('Invites sent/activated', f"{s['invites_issued']:,}/{s['invites_activated']:,}", inline=True)
-        ce.add_field('Contract calls', f"{s['contract_calls']}", inline=True)
+        ce.add_field('Stake +/-', f"{ev.staked:,}/{ev.unstaked:,} iDNA", inline=True)
+        ce.add_field('Bridged from/to BSC', f"{ev.bridged_from_bsc:,}/{ev.bridged_to_bsc:,} iDNA", inline=True)
+        ce.add_field('Burned', f"{ev.burned:,} iDNA", inline=True)
+        ce.add_field('Terminated', f"{ev.identities_killed:,} identities", inline=True)
+        ce.add_field('Invites sent/activated', f"{ev.invites_issued:,}/{ev.invites_activated:,}", inline=True)
+        ce.add_field('Contract calls', f"{ev.contract_calls}", inline=True)
 
-        if len(s['markets']) > 0:
+        if len(ev.markets) > 0:
             if usd:
-                buy_usd_vol = sum([m['buy_usd'] for m in s['markets'].values()])
-                sell_usd_vol = sum([m['sell_usd'] for m in s['markets'].values()])
+                buy_usd_vol = sum([m.buy_usd for m in ev.markets.values()])
+                sell_usd_vol = sum([m.sell_usd for m in ev.markets.values()])
                 desc = f"Buy/Sell volume: **${buy_usd_vol:,.0f}** / **${sell_usd_vol:,.0f}**"
             else:
-                buy_vol = sum([m['buy'] for m in s['markets'].values()])
-                sell_vol = sum([m['sell'] for m in s['markets'].values()])
+                buy_vol = sum([m.buy for m in ev.markets.values()])
+                sell_vol = sum([m.sell for m in ev.markets.values()])
                 desc = f"Buy/Sell volume: **{buy_vol:,.0f}** / **{sell_vol:,.0f} iDNA**"
             me = Embed(color=Color.og_blurple(), title=f"Market stats for the past {hours} hours", description=desc)
             embeds.append(me)
-            for m_name, m in s['markets'].items():
+            for m_name, m in ev.markets.items():
                 me.add_field('Market', MARKETS[m_name]['link'], inline=True)
                 if usd:
-                    me.add_field('Buy/Sell', f"${m['buy_usd']:,.0f} / ${m['sell_usd']:,.0f}", inline=True)
+                    me.add_field('Buy/Sell', f"${m.buy_usd:,.0f} / ${m.sell_usd:,.0f}", inline=True)
                 else:
-                    me.add_field('Buy/Sell', f"{m['buy']:,.0f} / {m['sell']:,.0f} iDNA", inline=True)
-                if m.get('avg_price'):
+                    me.add_field('Buy/Sell', f"{m.buy:,.0f} / {m.sell:,.0f} iDNA", inline=True)
+                if m.avg_price != 0:
                     if usd:
-                        me.add_field('Avg Price', m['avg_price_usd'], inline=True)
+                        me.add_field('Avg Price', f"${m.avg_price_usd:,.3f}", inline=True)
                     else:
-                        me.add_field('Avg Price', m['avg_price'], inline=True)
+                        me.add_field('Avg Price', m.avg_price, inline=True)
                 else:
                     me.add_field('​', '​', inline=True)
 
-        return {'embeds': embeds}
+        comps = [disnake.ui.Button(label=f'{"iDNA" if usd else "USD"} amounts', style=disnake.ButtonStyle.blurple, custom_id=f'{ev.id}:change_stats:{"idna" if usd else "usd"}'),
+            disnake.ui.Button(label='Change period', custom_id=f'{ev.id}:change_stats:period', style=disnake.ButtonStyle.grey)]
+        return {'embeds': embeds, 'components': comps}
 
-    def build_transfer_message(self, ev: dict) -> dict:
-        MAX_TOP_TFS = 10
-        dt = ev['time']
-        tfs = ev['tfs']
-        if ev['type'] == 'transfer':
-            addr = self.get_addr_text(ev['by'], 'address', chain=ev['tfs'][0].chain)
-            desc = f"Address: {addr}"
-            title = 'Large transfer volume'
-        elif ev['type'] == 'interesting_transfer':
-            addr = self.get_addr_text(ev['by'], 'address', chain=ev['tfs'][0].chain)
+    def build_transfer_message(self, ev: TransferEvent | InterestingTransferEvent | DexEvent) -> dict:
+        dt = ev.time
+        tfs = ev.tfs
+        by = ev.by
+        comps = []
+        if type(ev) == TransferEvent:
+            addr = self.get_addr_text(ev.tfs[0].signer, 'address', chain=ev.tfs[0].chain)
+            if getattr(ev, '_recv', False):
+                desc = f"Receiver: {addr}"
+                title = 'Large receive volume'
+            else:
+                desc = f"Address: {addr}"
+                title = 'Large transfer volume'
+        elif type(ev) == InterestingTransferEvent:
+            addr = self.get_addr_text(ev.tfs[0].signer, 'address', chain=ev.tfs[0].chain)
             desc = f"Address: {addr}"
             title = 'Interesting trasnfer'
-        elif ev['type'] == 'dex':
+        elif type(ev) == DexEvent:
             addr = None
             desc = None
             title = 'Large DEX volume'
@@ -185,38 +257,34 @@ class Bot:
             raise Exception('Unsupported event type')
 
         try:
-            tfs.sort(key=lambda tf: tf.meta.get('usd_value', 0), reverse=True)
-            dtfs = list(map(self.describe_tf, tfs))
+            dtfs = list(map(lambda tf: self.describe_tf(tf, by), tfs))
             if len(tfs) == 1:
                 dtf = dtfs[0]
                 em = Embed(title=dtf['title'], description=dtf.get('desc'), color=dtf['color'], url=dtf['url'], timestamp=dt)
-                em.add_field("Address", addr if addr else self.get_addr_text(dtf['by'], 'address', chain=ev['tfs'][0].chain), inline=True)
+                em.add_field("Address", addr if addr else self.get_addr_text(dtf['by'], 'address', chain=ev.tfs[0].chain), inline=True)
                 em.add_field("Value", f"${dtf['value']:,.2f}", inline=True)
                 if 'price' in dtf:
                     em.add_field("Price", f"${dtf['price']:.3f}", inline=True)
+                if 'thumbnail' in dtf:
+                    em.set_thumbnail(dtf['thumbnail'])
             else:
                 em = Embed(title=title, timestamp=dt)
-                tf_text = ''
-                truncated = ev.get('truncated', 0)
-                for i, dtf in enumerate(dtfs):
-                    tf_text += f"\n{i+1}. {dtf['short']}"
-                    if i >= MAX_TOP_TFS - 1:
-                        break
-                if i != len(dtfs) - 1 or truncated:
-                    tf_text += f'\nAnd {len(dtfs) - i - 1 + truncated:,} others'
 
-                if ev['type'] == 'dex':
-                    ratio = ev['buy_usd'] / (ev['buy_usd'] + ev['sell_usd'])
-                    em.color = Color.from_hsv(h=ratio / 3, s=0.69, v=1)
-                    em.add_field("Avg Price", f"${ev['avg_price']:.3f}", inline=True)
-                    em.add_field("Buy/Sell Volume", f"${ev.get('buy_usd', 0):,.2f} / ${ev.get('sell_usd', 0):,.2f}", inline=True)
+                if type(ev) == DexEvent:
+                    em.color = trade_color(ev.buy_usd, ev.sell_usd)
+                    em.description = f"Buy/sell volume: **${ev.buy_usd:,.0f}** / **${ev.sell_usd:,.0f}**"
+                    if ev.lp_usd:
+                        em.description += f"\nLiquidity change: **{'-' if ev.lp_usd < 0 else '+'}${abs(ev.lp_usd):,.0f}**"
+                    em.description += f"\nAverage price: **${ev.avg_price:.3f}**"
+                    if ev.last_price:
+                        em.description += f"\nLast traded price: **${ev.last_price:.3f}**"
                 else:
+                    em.description = f"Address: {self.get_addr_text(ev.by, chain=ev.tfs[0].chain)}\nAmount: **{ev.amount:,.0f}** iDNA"
                     em.color = average_color(map(lambda tf: tf['color'], dtfs))
+                    total_value = sum([tf.meta['usd_value'] for tf in tfs])
+                    em.add_field("Value", f"${total_value:,.2f}", inline=True)
 
-                if desc:
-                    em.description = f"{desc}\n\n**Largest transactions**{tf_text}"
-                else:
-                    em.description = f"**Largest transactions**{tf_text}"
+                comps = [disnake.ui.Button(label='Show transactions', style=disnake.ButtonStyle.blurple, custom_id=f'{ev.id}:show_tfs')]
         except Exception as exc:
             self.log.error(f"Failed to describe tfs: {exc}", exc_info=True)
             tf_text = ''
@@ -229,214 +297,326 @@ class Bot:
             if desc:
                 em.description = desc
             em.add_field("Transactions", tf_text, inline=False)
-        if ev['type'] == 'interesting_transfer':
+        if type(ev) == InterestingTransferEvent:
             em.color = Color.from_rgb(79, 36, 203)
-            em.title = f"Interesting transfer: {em.title}"
-        print(em.to_dict())
-        output = {'embed': em}
+            if em.title != 'Transfer':
+                em.title = f"Interesting transfer: {em.title}"
+            else:
+                em.title = f"Interesting transfer"
+        ev._color = em.color
+        output = {'embed': em, 'components': comps}
         return output
 
-    def build_kill_message(self, ev: dict) -> dict:
+    def build_kill_message(self, ev: KillEvent) -> dict:
         color = Color.from_rgb(32, 32, 32)
-        dt = ev['time']
-        desc = f"Identity: {self.get_addr_text(ev['addr'], 'identity')}"
-        e = Embed(color=color, title=f"Termination", description=desc,
-                  url=f"https://scan.idena.io/transaction/{ev['hash']}", timestamp=dt)
-        e.set_thumbnail(f'https://robohash.idena.io/{ev["addr"]}')
-        if ev.get('age'):
-            e.add_field("Age", ev['age'], inline=True)
-        if ev.get('stake'):
-            e.add_field("Stake", f"{abs(int(ev['stake'])):,} iDNA", inline=True)
-        if ev.get('pool'):
-            e.add_field("Pool", self.get_addr_text(ev['pool'], 'pool'), inline=True)
+        dt = ev.time
+        desc = f"Identity: {self.get_addr_text(ev.killed, 'identity')}"
+        if IDENA_TAG_KILL_DELEGATOR in ev.tfs[0].tags:
+            title = 'Delegator termination'
+        else:
+            title = 'Termination'
+
+        e = Embed(color=color, title=title, description=desc,
+                  url=f"https://scan.idena.io/transaction/{ev.tfs[0].hash}", timestamp=dt)
+        e.set_thumbnail(f'https://robohash.idena.io/{ev.killed}')
+        e.add_field("Age", ev.age, inline=True)
+        if ev.stake > 0:
+            e.add_field("Stake", f"{abs(ev.stake):,.0f} iDNA", inline=True)
+        if ev.pool:
+            e.add_field("Pool", self.get_addr_text(ev.pool, 'pool'), inline=True)
         return {'embed': e}
 
-    def build_mass_pool_message(self, ev: dict) -> dict:
-        if ev['subtype'] == 'kill':
+    def build_mass_pool_message(self, ev: MassPoolEvent) -> dict:
+        if ev.subtype == 'kill':
             color = Color.dark_red()
             name = 'termination'
-        elif ev['subtype'] == 'delegate':
+        elif ev.subtype == 'delegate':
             color = Color.dark_green()
             name = 'delegation'
-        elif ev['subtype'] == 'undelegate':
+        elif ev.subtype == 'undelegate':
             color = Color.dark_red()
             name = 'undelegation'
         else:
-            self.log.warning(f"Unknown mass pool subtype: {ev['subtype']}")
-            color = Color.dark_blue()
+            raise Exception(f"Unknown mass pool subtype: {ev.subtype}")
 
-        dt = max([e['time'] for e in ev['tfs']])
-        tfs = sorted(ev['tfs'], key=lambda ev: ev['stake'], reverse=True)
-        desc = f"Pool: {self.get_addr_text(ev['pool'], 'pool')}"
-        if ev['stake'] or ev.get('age'):
-            desc = f"\nTotal stake: **{int(ev['stake']):,}** iDNA, Total age: **{ev['age']:,}**"
-        idents_text = ''
-        LINES = 5
-        for i, k in enumerate(tfs):
-            idents_text += f"\n{i+1}. {self.get_addr_text(k['addr'], 'identity', short=False)}"
-            if k.get('stake') or k.get('age'):
-                idents_text += f" ({int(k.get('stake', 0)):,} iDNA, age: {k.get('age', 0)})"
-            if i >= (LINES - 1) and len(tfs) > LINES:
-                idents_text += f'\nAnd {len(tfs) - LINES:,} others'
-                break
-        desc += f'\n\n**Identities**{idents_text}'
+        dt = max([ch.time for ch in ev.changes])
+        desc = f"Pool: {self.get_addr_text(ev.pool, 'pool')}"
+        if ev.stake or ev.age:
+            desc += f"\nTotal stake: **{ev.stake:,.0f}** iDNA, Total age: **{ev.age:,}**"
+        desc += f'\nNumber of identities: **{ev.count}**'
         e = Embed(title=f"Mass pool {name}", description=desc, color=color,
-                  url=f"https://scan.idena.io/pool/{ev['pool']}", timestamp=dt)
-        e.set_thumbnail(f'https://robohash.idena.io/{ev["pool"]}')
-        return {'embed': e}
+                  url=f"https://scan.idena.io/pool/{ev.pool}", timestamp=dt)
+        e.set_thumbnail(f'https://robohash.idena.io/{ev.pool}')
+        comps = [disnake.ui.Button(label='Show identities', style=disnake.ButtonStyle.blurple, custom_id=f'{ev.id}:show_idents')]
+        return {'embed': e, 'components': comps}
 
-    def build_pool_stats_message(self, ev: dict, long: bool = False) -> dict:
+    def build_ident_list_embed(self, ev: MassPoolEvent, start_index: int, lines: int = 10) -> disnake.Embed:
+        if ev.subtype == 'kill':
+            color = Color.dark_red()
+            title = 'Terminated identities'
+        elif ev.subtype == 'delegate':
+            color = Color.dark_green()
+            title = 'Delegated identities'
+        elif ev.subtype == 'undelegate':
+            color = Color.dark_red()
+            title = 'Undelegated identities'
+        idents_text = ""
+        changes = list(sorted(ev.changes, key=lambda ch: ch.stake, reverse=True))
+        changes = changes[start_index:]
+        for i, pev in enumerate(changes):
+            idents_text += '\n' if i != 0 else ''
+            idents_text += f"{i+1+start_index}. {self.get_addr_text(pev.addr, 'identity', short=False)}"
+            idents_text += f" ({int(pev.stake):,} iDNA, age: {pev.age})"
+            if i >= (lines - 1) and len(changes) > lines:
+                idents_text += f'\nAnd {len(changes) - lines:,} more'
+                break
+        em = Embed(title=title, description=idents_text, color=color)
+        return em
+
+    def build_tf_list_embed(self, ev: TransferEvent, start_index: int, lines: int = 10) -> disnake.Embed:
+        title = 'Transactions (oldest first)'
+        tf_text = ""
+        tfs = ev.tfs[start_index:]
+        for i, tf in enumerate(tfs):
+            dtf = self.describe_tf(tf, ev_by=ev.by)
+            tf_text += '\n' if i != 0 else ''
+            price = f" _(at ${tf.meta.get('usd_price', 0):,.4f})_" if tf.meta.get('usd_price') is not None else ''
+            tf_text += f"{i+1+start_index}. {dtf['short']}{price}"
+            if i >= (lines - 1) and len(tfs) > lines:
+                tf_text += f'\nAnd {len(tfs) - lines:,} more'
+                break
+        em = Embed(title=title, description=tf_text, color=ev._color)
+        return em
+
+    def build_pool_stats_message(self, ev: PoolStatsEvent, start_index: int = 0) -> dict:
         color = Color.dark_blue()
         fields = [{'title': "Terminated identities", 'field': 'killed'},
                   {'title': "Delegated identities", 'field': 'delegated'},
                   {'title': "Undelegated identities", 'field': 'undelegated'},]
-        max_lines = 5 if not long else 10
-        pools = ev['stats']
-        hours = int(round(ev['period'] / (60 * 60), 0))
+        lines = 5 if not ev._long else 10  # TODO: this can fail sometimes because of address names
+        hours = int(round(ev.period / (60 * 60), 0))
+        start_index = max(0, min(start_index, len(ev) - lines))
         e = Embed(color=color, title=f"Pool stats for the past {hours} hours")
         for field in fields:
             field_text = ''
-            field_pools = map(lambda i: (i[0], i[1][field['field']]), pools.items())
-            field_pools = sorted(filter(lambda p: p[1] > 0, field_pools), key=lambda t: t[1], reverse=True)
-            for i, pool in enumerate(field_pools):
-                if pool[1] == 0:
+            field_pools = list(getattr(ev, field['field']).items())
+            page = field_pools[start_index:]
+            for i, (pool, count) in enumerate(page):
+                if count == 0:
                     break
                 field_text += '\n' if i != 0 else ''
-                field_text += f"{i+1}. {self.get_addr_text(pool[0], 'pool', no_link=False, short_len=4, short=True)}: {pool[1]:,}"
-                if i == max_lines - 1 and len(field_pools) > max_lines:
-                    rest_sum = sum([p[1] for p in field_pools[i+1:]])
-                    field_text += f'\nAnd {len(field_pools) - max_lines} others with {rest_sum:,} identitites'
+                field_text += f"{i+start_index+1}. {self.get_addr_text(pool, 'pool', no_link=False, short_len=4, short=True)}: {count:,}"
+                if i == lines - 1 and len(page) > lines:
+                    rest_sum = sum([p[1] for p in page[i+1:]])
+                    field_text += f'\nAnd {len(page) - lines} others with {rest_sum:,} identitites'
                     break
             if len(field_text) > 0:
                 e.add_field(field['title'], field_text, inline=True)
-        return {'embed': e}
+        comps = self.build_list_buttons(ev.id, 'pool_seek', start_index, len(ev), lines)
+        return {'embed': e, 'components': comps}
 
-    def build_cex_trade_message(self, ev: dict) -> dict:
-        ratio = ev['total_buy_val'] / (ev['total_buy_val'] + ev['total_sell_val'])
-        self.log.debug(f"{ratio=}")
-        color = Color.from_hsv(h=ratio / 3, s=0.69, v=1)
+    def build_cex_trade_message(self, ev: CexEvent) -> dict:
+        color = trade_color(ev.total_buy_val, ev.total_sell_val)
 
-        desc = f'Total buy/sell volume: **${ev["total_buy_val"]:,.0f}** / **${ev["total_sell_val"]:,.0f}**'
+        desc = f'Total buy/sell volume: **${ev.total_buy_val:,.0f}** / **${ev.total_sell_val:,.0f}**'
         em = Embed(color=color, title=f"Large CEX volume", description=desc)
-        for m_name, m in ev['markets'].items():
+        for m_name, m in ev.markets.items():
             em.add_field('Market', MARKETS[m_name]['link'], inline=True)
-            em.add_field('Buy/Sell Volume', f"${m['buy_usd_value']:,.0f} / ${m['sell_usd_value']:,.0f}", inline=True)
-            if m.get('avg_price'):
-                em.add_field('Avg Price', f"${m['avg_price']:.3f}", inline=True)
-            else:
-                em.add_field('​', '​', inline=True)
+            em.add_field('Buy/Sell Volume', f"${m.buy_usd:,.0f} / ${m.sell_usd:,.0f}", inline=True)
+            em.add_field('Avg Price', f"${m.avg_price_usd:.3f}", inline=True)
         return {'embed': em}
 
-    def build_top_message(self, ev: dict) -> dict:
+    def build_club_message(self, ev: ClubEvent) -> dict:
+        desc = f'Identity {self.get_addr_text(ev.addr, "identity")} has entered the **{ev.club_str}** stake club!'
+        if ev.rank > 0:
+            desc += f'\nRanked **#{ev.rank}** by stake'
+        color = get_identity_color(ev.addr)
+        em = Embed(color=color, title=f"{ev.club_str} club membership", description=desc)
+        em.set_thumbnail(f'https://robohash.idena.io/{ev.addr}')
+        em.add_field('Stake', f"{ev.stake:,.0f} iDNA", inline=True)
+        return {'embed': em}
+
+    def build_rank_message(self, ident: dict, rewards: float) -> dict:
+        addr = ident['address']
+        title = f'Rank of {shorten(addr)}'
+        network_size = self.db.count_alive_identities()
+        self.log.debug(f"{network_size=}")
+
+        color = get_identity_color(addr)
+        em = Embed(color=color, title=title, url=f'https://scan.idena.io/identity/{addr}')
+        em.set_thumbnail(f'https://robohash.idena.io/{addr}')
+
+        stake = Decimal(ident['stake'])
+        rank = self.db.count_identities_with_stake(stake)
+        stake = int(stake)  # to round down
+        perc = rank / network_size * 100
+        em.add_field('Stake', f'**{stake:,.0f}** iDNA – **#{rank}** (top **{perc:.2f}%**)', inline=False)
+
+        age = int(ident['age'])
+        rank = self.db.count_identities_with_age(age)
+        perc = rank / network_size * 100
+        em.add_field('Age', f'**{age:,.0f}** epochs – **#{rank}** (top **{perc:.2f}%**)', inline=False)
+
+        rewards = f'**{rewards[0]:,.0f}** iDNA (**{rewards[1]:.1f}%** APY)'
+        if ident['state'] in ['Newbie', 'Verified', 'Human']:
+            em.add_field('Epoch rewards', f'{rewards}', inline=False)
+        else:
+            em.add_field('Epoch rewards', f'~~{rewards}~~ ({ident["state"]})', inline=False)
+
+        return {'embed': em}
+
+    def build_top_message(self, ev: TopEvent, start_index: int = 0) -> dict:
         DESC_LIMIT = 4096
-        desc = f'Total value: **${ev["total_usd_value"]:,.0f}**'
-        # @TODO: clean this up
-        if ev['top_type'] in ['kill', 'stake']:
-            desc += f' (**{ev["total_idna"]:,.0f}** iDNA)'
-        if ev['top_type'] == 'kill':
-            desc += f'. Total age: **{ev["total_age"]:,}**'
-        elif ev['top_type'] == 'dex':
-            desc = f"Buy/Sell volume: **${ev['buy_usd']:,.0f}** / **${ev['sell_usd']:,.0f}**"
-            if ev['lp_usd'] != 0:
-                desc += f"\nLiquidity change: **{'-' if ev['lp_usd'] < 0 else '+'}${ev['lp_usd']:,.0f}**"
+        LINES = 10 if not ev._long else 20
+        desc = f'Total value: **${ev.total_usd_value:,.0f}**'
+        if type(ev) in [TopKillEvent, TopStakeEvent]:
+            desc += f' (**{ev.total_idna:,.0f}** iDNA)'
+        if type(ev) == TopKillEvent:
+            desc += f'. Total age: **{ev.total_age:,}**'
+        elif type(ev) == TopDexEvent:
+            desc = f"Buy/Sell volume: **${ev.buy_usd:,.0f}** / **${ev.sell_usd:,.0f}**"
+            if ev.lp_usd != 0:
+                desc += f"\nLiquidity change: **{'-' if ev.lp_usd < 0 else '+'}${abs(ev.lp_usd):,.0f}**"
         tf_texts = []
         total_len = 0
-        items: list[Transfer | dict] = ev['items']
         didnt_fit = 0
-        for i, item in enumerate(items):
-            if ev['top_type'] == 'stake':
-                pass
-            else:
+        start_index = max(0, min(start_index, len(ev) - LINES))
+        page_items = ev.items[start_index:]
+        for i, item in enumerate(page_items):
+            if type(ev) != TopStakeEvent:
                 tf: Transfer = item
 
-            if ev['top_type'] == 'kill':
+            index = f"{i + start_index + 1}"
+            if type(ev) == TopKillEvent:
                 killed = self.get_addr_text(tf.meta['killedIdentity'], type_='identity', short_len=4)
                 stake = abs(list(tf.changes.values())[0])
-                tf_texts.append(f"{i+1}. {killed} ({stake:,.0f} iDNA, age: {tf.meta['age']})")
-            elif ev['top_type'] == 'stake':
+                tf_texts.append(f"{index}. {killed} ({stake:,.0f} iDNA, age: {tf.meta['age']})")
+            elif type(ev) == TopStakeEvent:
                 addr = self.get_addr_text(item['signer'], type_='address')
-                tf_texts.append(f"{i+1}. {addr} ({item['stake']:,.0f} iDNA)")
-            elif ev['top_type'] == 'dex':
+                tf_texts.append(f"{index}. {addr} ({item['stake']:,.0f} iDNA)")
+            elif type(ev) == TopDexEvent:
                 dtf = self.describe_tf(tf)
-                tf_texts.append(f"{i+1}. {dtf['short']}")
-            elif ev['top_type'] == 'transfer':
+                price = f" _(at ${tf.meta.get('usd_price', 0):,.4f})_" if tf.meta.get('usd_price') is not None else ''
+                tf_texts.append(f"{index}. {dtf['short']}{price}")
+            elif type(ev) == TopEvent:
                 try:
                     dtf = self.describe_tf(tf)
                 except Exception as e:
                     self.log.error(f"{tf.hash}")
                     continue
-                tf_texts.append(f"{i+1}. {dtf['short']}")
+                tf_texts.append(f"{index}. {dtf['short']}")
             total_len += len(tf_texts[-1])
-            if total_len >= DESC_LIMIT - 500:  # some margin
-                didnt_fit = len(items) - i + 1
+            if total_len >= DESC_LIMIT - 500 or i == LINES - 1:  # some margin
+                didnt_fit = len(ev) - i
                 break
-        if didnt_fit or ev["truncated"]:
-            tf_texts.append(f'And {didnt_fit + ev["truncated"]:,} others')
+        if didnt_fit - start_index - 1 > 0:
+            tf_texts.append(f'And {didnt_fit - start_index - 1:,} more')
         tf_text = '\n'.join(tf_texts)
-        past = f'for the past {int(ev["period"] / 60 / 60)} hours'
+        past = f'for the past {int(ev.period / 60 / 60)} hours'
         desc = f"{desc}\n{tf_text}"
-        if ev['top_type'] == 'kill':
+        if type(ev) == TopKillEvent:
             em = Embed(title=f'Top kills {past}', description=desc, color=Color.dark_red())
-        elif ev['top_type'] == 'stake':
+        elif type(ev) == TopStakeEvent:
             em = Embed(title=f'Top stake replenishments {past}', description=desc, color=Color.dark_green())
-        elif ev['top_type'] == 'dex':
-            em = Embed(title=f'Top DEX transactions {past}', description=desc, color=Color.gold())
-        elif ev['top_type'] == 'transfer':
+        elif type(ev) == TopDexEvent:
+            color = trade_color(ev.buy_usd, ev.sell_usd)
+            em = Embed(title=f'Top DEX transactions {past}', description=desc, color=color)
+        elif type(ev) == TopEvent:
             em = Embed(title=f'Top transfers {past}', description=desc, color=Color.from_rgb(129, 190, 238))
 
-        return {'embed': em}
+        comps = self.build_list_buttons(ev.id, 'top_seek', start_index, len(ev), LINES)
+        return {'embed': em, 'components': comps}
 
-    def describe_tf(self, tf: Transfer) -> dict:
+    def build_list_buttons(self, ev_id, cmd: str, start_index: int, item_count: int, lines: int, last_index: int | None = None):
+        back_disabled = start_index <= 0
+        if last_index:
+            forward_disabled = last_index == item_count
+        else:
+            forward_disabled = start_index + lines >= item_count
+        comps = []
+        if not back_disabled or not forward_disabled:
+            end_index = 9999999  # needed to avoid an id collision, can't specify an actual index
+            comps.extend([
+                disnake.ui.Button(label='◁', style=disnake.ButtonStyle.green, custom_id=f'{ev_id}:{cmd}:{max(start_index - lines, 0)}', disabled=back_disabled),
+                disnake.ui.Button(label='▷', style=disnake.ButtonStyle.green, custom_id=f'{ev_id}:{cmd}:{start_index + lines}', disabled=forward_disabled),
+                disnake.ui.Button(label='End' if not forward_disabled else 'Start', style=disnake.ButtonStyle.grey, custom_id=f'{ev_id}:{cmd}:{end_index if not forward_disabled else -1}')])
+        return comps
+
+    def describe_tf(self, tf: Transfer, ev_by: str = '') -> dict:
         "Turns a Transfer into a dict that can [almost] be displayed as an Embed."
         self.log.debug(f"Describing: {tf}")
         d = {'title': 'Transfer', 'desc': '', 'short': self.get_tx_text(tf, 'Unknown transfer'),
-             'value': tf.meta.get('usd_value', 0), 'by': tf.signer, 'tf': tf,
+             'value': tf.meta.get('usd_value', 0), 'by': tf.signer if not ev_by else ev_by, 'tf': tf,
              'chain': tf.chain, 'color': Color.from_rgb(129, 190, 238), 'url': self.get_tf_url(tf)}
         if 'usd_price' in tf.meta:
             d['price'] = tf.meta['usd_price']
         if IDENA_TAG_SEND in tf.tags or len(tf.tags) == 0:
-            d.update({'title': 'Transfer',
-                      'desc': f'Sent **{int(tf.value()):,}** iDNA to {self.get_addr_text(tf.to(single=True), chain=tf.chain)}',
-                      'short': self.get_tx_text(tf, f'Sent to {shorten(tf.to(single=True))}')})
+            if tf.from_(single=True) != d['by']:
+                desc = f'Received **{tf.value():,.0f}** iDNA from {self.get_addr_text(tf.from_(single=True), chain=tf.chain)}'
+                short = f'Received {tf.value():,.0f} iDNA from {shorten(tf.from_(single=True), 3)}'
+            else:
+                desc = f'Sent **{tf.value():,.0f}** iDNA to {self.get_addr_text(tf.to(single=True), chain=tf.chain)}'
+                short = f'Sent {tf.value():,.0f} iDNA to {shorten(tf.to(single=True), 3)}'
+            d.update({'title': 'Transfer', 'desc': desc, 'short': self.get_tx_text(tf, desc=short)})
         elif IDENA_TAG_BRIDGE_BURN in tf.tags:
             d.update({'title': 'Bridge transfer to BSC',
-                      'desc': f'Bridged **{int(tf.value()):,}** iDNA to BSC address {self.get_addr_text(tf.meta["bridge_to"], chain="bsc")}',
+                      'desc': f'Bridged **{tf.value():,.0f}** iDNA to BSC address {self.get_addr_text(tf.meta["bridge_to"], chain="bsc")}',
                       'short': self.get_tx_text(tf, f'Bridged to BSC: {shorten(tf.meta["bridge_to"])}'),
                       'color': Color.light_grey()})
+        elif IDENA_TAG_BRIDGE_MINT in tf.tags:
+            d.update({'title': 'Bridge transfer from BSC',
+                      'desc': f'Bridged **{tf.value():,.0f}** iDNA to Idena address {self.get_addr_text(tf.to(single=True), chain="idena")}',
+                      'short': self.get_tx_text(tf, f'Bridged from BSC: {shorten(tf.to(single=True))}'),
+                      'color': Color.light_grey()})
         elif IDENA_TAG_STAKE in tf.tags:
+            receiver = tf.to(single=False)
+            if not receiver:
+                receiver = tf.signer
+                desc = f'Replenished stake with **{tf.value():,.0f}** iDNA'
+                short = f'Replenished stake with {tf.value():,.0f} iDNA'
+            else:
+                receiver = receiver[0]
+                desc = f'Replenished stake of {self.get_addr_text(receiver, type_="identity")} with **{tf.value():,.0f}** iDNA'
+                short = f'Replenished stake of {shorten(receiver, length=3)} with {tf.value():,.0f} iDNA'
+            if 'cur_stake' in tf.meta:
+                cur_stake = Decimal(tf.meta['cur_stake'])
+                desc += f'\nCurrent stake: **{cur_stake:,.0f}** iDNA'
             d.update({'title': 'Stake replenishment',
-                      'desc': f'Replenished stake with **{int(tf.value()):,}** iDNA',
-                      'short': self.get_tx_text(tf, f'Replenished stake'),
-                      'thumbnail': f'https://robohash.idena.io/{tf.signer}',
+                      'desc': desc, 'short': self.get_tx_text(tf, desc=short),
+                      'thumbnail': f'https://robohash.idena.io/{receiver}',
                       'color': Color.dark_green()})
         elif IDENA_TAG_BURN in tf.tags:
             d.update({'title': 'Coin burn',
-                      'desc': f'Burned **{int(tf.value()):,}** iDNA',
+                      'desc': f'Burned **{tf.value():,.0f}** iDNA',
                       'short': self.get_tx_text(tf, f'Burned coins'),
                       'color': Color.orange()})
         elif any_in(tf.tags, [IDENA_TAG_KILL, IDENA_TAG_KILL_DELEGATOR]):
-            d.update({'title': 'Identity killed',
-                      'desc': f'Killed at age {tf.meta["age"]} and unlocked **{int(tf.value(recv=True)):,}** iDNA',
-                      'short': self.get_tx_text(tf, f'Identity killed'),
+            if IDENA_TAG_KILL in tf.tags:
+                title = 'Identity killed'
+            else:
+                title = 'Delegator killed'
+            d.update({'title': title,
+                      'desc': f'Killed at age **{tf.meta.get("age", "?")}** and unlocked **{tf.value(recv=True):,.0f}** iDNA',
+                      'short': self.get_tx_text(tf, f'{title} for {tf.value(recv=True)} iDNA'),
                       'color': Color.from_rgb(32, 32, 32)})
         elif IDENA_TAG_DEPLOY in tf.tags:
             d.update({'title': 'Contract deployment',
-                      'desc': f'Deployed contract {self.get_addr_text(tf.meta["call"]["contract"], type_="contract")}' + f' with **{int(tf.value()):,}** iDNA' if int(tf.value()) > 0 else '',
+                      'desc': f'Deployed contract {self.get_addr_text(tf.meta["call"]["contract"], type_="contract")}' + f' with **{tf.value():,.0f}** iDNA' if int(tf.value()) > 0 else '',
                       'short': self.get_tx_text(tf, f'Deployed contract'),
                       'color': Color.blue()})
         elif IDENA_TAG_CALL in tf.tags:
             d.update({'title': 'Contract call',
-                      'desc': f'Called contract {self.get_addr_text(tf.meta["call"]["contract"], type_="contract")}' + f' with **{int(tf.value()):,}** iDNA' if int(tf.value()) > 0 else '',
+                      'desc': f'Called contract {self.get_addr_text(tf.meta["call"]["contract"], type_="contract")}' + f' with **{tf.value():,.0f}** iDNA' if int(tf.value()) > 0 else '',
                       'short': self.get_tx_text(tf, f'Called contract'),
                       'color': Color.blue()})
         elif BSC_TAG_BRIDGE_BURN in tf.tags:
             d.update({'title': 'Bridge transfer to Idena',
-                      'desc': f'Bridged **{int(tf.value()):,}** iDNA to Idena',
+                      'desc': f'Bridged **{tf.value():,.0f}** iDNA to Idena',
                       'short': self.get_tx_text(tf, f'Bridged to Idena'),
                       'color': Color.light_grey()})
         elif BSC_TAG_BRIDGE_MINT in tf.tags:
             d.update({'title': 'Bridge transfer from Idena',
-                      'desc': f'Bridged **{int(tf.value()):,}** iDNA to BSC address {self.get_addr_text(tf.to(True), chain="bsc")}',
+                      'desc': f'Bridged **{tf.value():,.0f}** iDNA to BSC address {self.get_addr_text(tf.to(True), chain="bsc")}',
                       'short': self.get_tx_text(tf, f'Bridged from Idena: {shorten(tf.to(single=True))}'),
                       'color': Color.light_grey()})
         elif DEX_TAG not in tf.tags:
@@ -444,7 +624,7 @@ class Bot:
         if 'usd_value' in tf.meta:
             d['short'] += f" (${tf.meta['usd_value']:,.2f})"
         else:
-            d['short'] += f" ({int(tf.value()):,} iDNA)"
+            d['short'] += f" ({tf.value():,.0f} iDNA)"
 
         if DEX_TAG in tf.tags:
             liq_str = ''
@@ -452,12 +632,12 @@ class Bot:
                 for pool_addr, pool_ch in tf.meta['lp'].items():
                     liq_str += ', ' if liq_str else ''
                     ticker = self.db.known[self.db.known[pool_addr]['token1']]['name']
-                    liq_str += f"**{abs(float(pool_ch['token'])):,.2f}** {ticker} + **{abs(int(pool_ch['idna'])):,}** iDNA"
+                    liq_str += f"**{abs(float(pool_ch['token'])):,.2f}** {ticker} + **{abs(int(pool_ch['idna'])):,.0f}** iDNA"
                 excess = tf.meta.get('lp_excess', 0)
                 if DEX_TAG_PROVIDE_LP in tf.tags and excess != 0:
                     liq_str = f"{'Bought' if excess > 0 else 'Sold'} **{int((abs(excess))):,}** iDNA and deposited {liq_str}"
                 elif DEX_TAG_WITHDRAW_LP in tf.tags and excess != 0:
-                    liq_str = f"Withdrawn {liq_str} and {'bought' if excess > 0 else 'sold'} **{int((abs(excess))):,}** iDNA"
+                    liq_str = f"Withdrawn {liq_str} and {'bought' if excess > 0 else 'sold'} **{abs(excess):,.0f}** iDNA"
                 else:
                     liq_str = f"{'Deposited' if DEX_TAG_PROVIDE_LP in tf.tags else 'Withdrawn'} {liq_str}"
             if DEX_TAG_WITHDRAW_LP in tf.tags:
@@ -474,12 +654,10 @@ class Bot:
                 d.update({'title': 'DEX arbitrage',
                           'short': self.get_tx_text(tf, f'Arbitraged iDNA'),
                           'color': Color.light_grey()})
-                # d['short'] += f" ({int(tf.value())} iDNA)"
             elif DEX_TAG_BUY in tf.tags:
                 d.update({'title': 'DEX buy',
                           'short': self.get_tx_text(tf, f'Bought iDNA'),
                           'color': Color.green()})
-                # d['short'] += f" ({int(tf.value())} iDNA)"
             elif DEX_TAG_SELL in tf.tags:
                 d.update({'title': 'DEX sell',
                           'short': self.get_tx_text(tf, f'Sold iDNA'),
@@ -487,7 +665,7 @@ class Bot:
             if 'usd_value' in tf.meta:
                 d['short'] += f" (${tf.meta['usd_value']:,.2f})"
             else:
-                d['short'] += f" ({int(tf.value()):,} iDNA)"
+                d['short'] += f" ({tf.value():,.0f} iDNA)"
 
             if any_in(tf.tags, DEX_TRADE_TAGS) and not any_in(tf.tags, DEX_LP_TAGS):
                 for_tokens = ''
@@ -497,7 +675,7 @@ class Bot:
                 for ticker, change in tokens:
                     for_tokens += ' + ' if for_tokens else ''
                     for_tokens += f'**{change:,.2f}** {ticker}'
-                d['desc'] = f'{"Bought" if DEX_TAG_BUY in tf.tags else "Sold"} **{int(tf.value()):,}** iDNA for {for_tokens}'
+                d['desc'] = f'{"Bought" if DEX_TAG_BUY in tf.tags else "Sold"} **{tf.value():,.0f}** iDNA for {for_tokens}'
 
         return d
 
@@ -517,7 +695,10 @@ class Bot:
         else:
             raise Exception("Unsupported chain")
         if info and name and info.get('hidden', False) is False:
-            return f"[{name}]({url}/{type_}/{addr} \'{addr}\')"
+            if not short:
+                return f"[{name}]({url}/{type_}/{addr} \'{addr}\')"
+            else:
+                return f"[{name}]({url}/{type_}/{addr})"
         else:
             if no_link:
                 return f"{shorten(addr)}"
@@ -548,13 +729,68 @@ class Bot:
             raise Exception("Unsupported chain")
         return f"{url}/{type}/{tf.hash}"
 
-    async def update_activity(self, ev: dict):
-        self.activity[ev['type']].update({ev['chain']: ev['value']})
+    async def update_activity(self, ev: BlockEvent):
+        self.activity['block'].update({ev.chain: ev.height})
         if time.time() - self.last_activity_update < 10:
             return
         act_str = f"IDNA: {self.activity['block'][CHAIN_IDENA]} BSC: {self.activity['block'][CHAIN_BSC]}"
         self.last_activity_update = time.time()
         await self.disbot.change_presence(status=disnake.Status.online, activity=disnake.Activity(type=disnake.ActivityType.watching, name=act_str))
+
+    async def get_event(self, ev_id: int):
+        self.log.debug(f"Getting event {ev_id}")
+        if ev_id in self.ev_to_msg:
+            return self.ev_to_msg[ev_id]
+        else:
+            try:
+                chan_id, msg_id, ev = await self.db.get_event(ev_id)
+                if not ev:
+                    return (None, None)
+                chan = self.disbot.get_channel(chan_id)
+                if not chan:
+                    chan = await self.disbot.fetch_channel(chan_id)
+                msg = await chan.fetch_message(msg_id)
+                self.ev_to_msg[ev.id] = (ev, msg)
+                return (ev, msg)
+            except Exception as e:
+                self.log.error(f"Failed to get event {ev_id}: {e}", exc_info=True)
+                return (None, None)
+
+    async def save_event(self, ev: Event, resp: disnake.Message):
+        if type(ev) == BlockEvent:
+            return
+        self.log.debug(f"Saving event {ev.id=} {resp=}")
+        if not resp:
+            self.log.warning(f"Invalid message for ev: {ev.id=} {ev=} {resp=}")
+            return
+        self.ev_to_msg[ev.id] = (ev, resp)
+        await self.db.insert_event(ev=ev, msg=resp)
+
+    async def clean_event_cache(self):
+        items = list(self.ev_to_msg.items())
+        if datetime.now(tz=timezone.utc) - self.event_cache_cleaned_at < timedelta(minutes=20):
+            return
+        self.event_cache_cleaned_at = datetime.now(tz=timezone.utc)
+        self.log.debug("Cleaning event cache")
+        for ev_id, (ev, ev_msg) in items:
+            if not ev or not ev_msg:
+                self.log.warning(f"Event {ev_id=} {ev=} {ev_msg=} is invalid")
+                del self.ev_to_msg[ev_id]
+                continue
+            if datetime.now(tz=timezone.utc) - ev_msg.created_at > timedelta(days=3):
+                self.log.debug(f"Removing event {ev_id=} {ev_msg.id=}")
+                try:
+                    if ev_msg.components:
+                        await ev_msg.edit(components=None)
+                except Exception as e:
+                    self.log.error(f"Failed to remove buttons from event {ev_id=} {ev_msg.id=}: {e}")
+                del self.ev_to_msg[ev_id]
+
+    def reset_state(self):
+        self.last_activity_update = 0
+        self.ev_to_msg.clear()
+        self.event_cache_cleaned_at = datetime.now(tz=timezone.utc)
+
 
 # None of this looks right
 def create_bot(db: Database, conf: Config, root_log: Logger):
@@ -569,6 +805,98 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
     @disbot.event
     async def on_ready():
         log.info(f"Disbot is ready: {disbot.user}")
+
+    @disbot.event
+    async def on_application_command(inter):
+        log.debug(f"{inter=}")
+        await disbot.process_application_commands(inter)
+
+    @disbot.event
+    async def on_button_click(inter: disnake.MessageInteraction):
+        spl = inter.component.custom_id.split(':')
+        log.debug(f"BTN {spl=} by {inter.author.name}#{inter.author.discriminator}")
+        ev_id, cmd = int(spl[0]), spl[1]
+        ev, _ = await bot.get_event(ev_id)
+        if not ev:
+            log.warning(f"Event {ev_id} not found")
+            log.debug(inter.message)
+            await inter.message.edit(components=[disnake.ui.Button(label="Not available anymore", disabled=True, style=disnake.ButtonStyle.grey)])
+            # Interaction must be responded to otherwise it will look like it failed
+            await inter.send(content=f"This event is no longer available", ephemeral=True)
+            return
+        btn_msg = None
+        first_resp = False  # if True, response sends a new message, otherwise edit the existing response
+
+        if cmd in ['show_idents', 'show_tfs']:
+            LINES = 10
+            start_index = 0
+            first_resp = True
+            if len(spl) > 2:
+                start_index = int(spl[2])
+                first_resp = False
+            start_index = max(0, min(start_index, len(ev) - LINES))
+            if cmd == 'show_idents':
+                list_embed = bot.build_ident_list_embed(ev, start_index=start_index, lines=LINES)
+            elif cmd == 'show_tfs':
+                list_embed = bot.build_tf_list_embed(ev, start_index=start_index, lines=LINES)
+            comps = bot.build_list_buttons(ev.id, cmd, start_index, len(ev), LINES)
+            btn_msg = {'embed': list_embed, 'components': comps, 'ephemeral': True}
+        elif cmd == 'top_seek':
+            start_index = int(spl[2])
+            btn_msg = bot.build_top_message(ev, start_index=start_index)
+        elif cmd == 'pool_seek':
+            start_index = int(spl[2])
+            btn_msg = bot.build_pool_stats_message(ev, start_index=start_index)
+        elif cmd == 'change_stats':
+            sub_cmd = spl[2]
+            if sub_cmd == 'usd':
+                btn_msg = bot.build_stats_message(ev, usd=True)
+            elif sub_cmd == 'idna':
+                btn_msg = bot.build_stats_message(ev, usd=False)
+            elif sub_cmd == 'period':
+                hours = int(round(ev.period / (60 * 60), 0))
+                input = disnake.ui.TextInput(label='Hours', custom_id='hours', placeholder=f"{hours}", value=f"{hours}", min_length=1, max_length=4, style=disnake.TextInputStyle.short)
+                modal = disnake.ui.Modal(title="Change period", custom_id=f"{ev_id}:change_stats:period_set", components=[input])
+                await inter.response.send_modal(modal)
+            elif sub_cmd == 'period_set':
+                breakpoint()
+
+        if btn_msg:
+            if first_resp:
+                await inter.send(**btn_msg)
+            else:
+                if 'ephemeral' in btn_msg:
+                    del btn_msg['ephemeral']
+                await inter.response.edit_message(**btn_msg)
+        else:
+            log.warning(f"No button message for command {spl}!")
+
+    @disbot.event
+    async def on_modal_submit(inter: disnake.ModalInteraction):
+        spl = inter.custom_id.split(':')
+        ev_id, cmd = int(spl[0]), spl[1]
+        log.debug(f"MOD {spl=} by {inter.author.name}#{inter.author.discriminator}")
+        ev, ev_msg = await bot.get_event(ev_id)
+        inter.data.components[0]['components'][0]['value']
+        if cmd == 'change_stats':
+            sub_cmd = spl[2]
+            if sub_cmd == 'period_set':
+                hours = None
+                try:
+                    hours = inter.data.components[0]['components'][0]['value']
+                    hours = int(hours)
+                except Exception as e:
+                    log.error(f"Invalid period \"{hours}\": {e}")
+                if hours < 1:
+                    hours = 1
+                elif hours > 720:
+                    hours = 720
+
+                new_ev = await bot.tracker.generate_stats_event(period=hours * 60 * 60)
+                new_ev.id = ev.id
+                new_ev_msg = bot.build_stats_message(new_ev)
+                await inter.response.edit_message(**new_ev_msg)
+                await bot.save_event(new_ev, ev_msg)
 
     def protect(users=admin_users, roles=admin_roles, public=False):
         def decorator(func):
@@ -609,11 +937,13 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
             await bot.send_response(msg, {'content': 'No events in the given time range', 'ephemeral': True})
             return
 
+        log.debug(json.dumps(ev.to_dict()))
         ev_msg = bot.build_top_message(ev)
         apply_ephemeral(msg, ev_msg)
         if long:
             ev_msg['ephemeral'] = True
-        await bot.send_response(msg, ev_msg)
+        sent_msg = await bot.send_response(msg, ev_msg)
+        await bot.save_event(ev, sent_msg)
 
     @disbot.slash_command(options=[disnake.Option("hours", description="Collect stats from this far back", required=False, type=disnake.OptionType.integer, min_value=1, max_value=720), disnake.Option("usd", description="Show market stats in USD", required=False, type=disnake.OptionType.boolean)])
     @protect(roles=command_roles, public=True)
@@ -625,7 +955,8 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
         ev = await bot.tracker.generate_stats_event(period=hours * 60 * 60)
         ev_msg = bot.build_stats_message(ev, usd=usd)
         apply_ephemeral(msg, ev_msg)
-        await bot.send_response(msg, ev_msg)
+        sent_msg = await bot.send_response(msg, ev_msg)
+        await bot.save_event(ev, sent_msg)
 
     @disbot.slash_command(options=[disnake.Option("hours", description="Collect pool stats from this far back", required=False, type=disnake.OptionType.integer, min_value=1, max_value=720), disnake.Option("long", description="Show as many lines as possible", required=False, type=disnake.OptionType.boolean)])
     @protect(roles=command_roles, public=True)
@@ -634,15 +965,48 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
         if not await bot.ratelimit(msg):
             await bot.send_response(msg, {'content': 'Command execution not allowed', 'ephemeral': True})
             return
-        ev = await bot.tracker.generate_pool_stats(period=hours * 60 * 60)
+        ev = await bot.tracker.generate_pool_stats(period=hours * 60 * 60, long=long)
         if not ev:
             await bot.send_response(msg, {'content': 'No pool events in the given time range', 'ephemeral': True})
-        ev_msg = bot.build_pool_stats_message(ev, long=long)
+        ev_msg = bot.build_pool_stats_message(ev)
         apply_ephemeral(msg, ev_msg)
         if long:
             ev_msg['ephemeral'] = True
-        # ev_msg['view'] = EventView(log)
-        await bot.send_response(msg, ev_msg)
+        sent_msg = await bot.send_response(msg, ev_msg)
+        await bot.save_event(ev, sent_msg)
+
+    @disbot.slash_command(options=[disnake.Option("address", description="Show rank of this identity", required=False, type=disnake.OptionType.string), disnake.Option("remember", description="Use this address by default in the future", required=False, type=disnake.OptionType.boolean), disnake.Option("private", description="Only show the rank to you", required=False, type=disnake.OptionType.boolean)])
+    @protect(roles=command_roles, public=True)
+    async def rank(msg: disnake.CommandInteraction, address: str = '', remember: bool = False, private: bool = False):
+        "Show the stake and age rank of an identity"
+        if not await bot.ratelimit(msg):
+            await bot.send_response(msg, {'content': 'Command execution not allowed', 'ephemeral': True})
+            return
+        if address and len(address) != 42 and address[:2] != '0x':
+            await bot.send_response(msg, {'content': 'Invalid address', 'ephemeral': True})
+            return
+        if not address:
+            if str(msg.author.id) not in bot.conf.rank_addresses:
+                await bot.send_response(msg, {'content': "You don't have a remembered address.\nUse the `address` parameter to specify an address. You can also set `remember` to `True` to use it by default in the future.", 'ephemeral': True})
+                return
+            address = bot.conf.rank_addresses[str(msg.author.id)]
+        if remember:
+            bot.conf.rank_addresses[str(msg.author.id)] = address
+
+        try:
+            await bot.idena_listener.update_identity(address.lower())
+            rewards = await bot.idena_listener.get_rewards_for_identity(address.lower())
+        except Exception as e:
+            log.error(f"Error updating identity: {e}", exc_info=True)
+        ident = bot.db.get_identity(address.lower())
+        if not ident or ident['state'].lower() == 'undefined':
+            await bot.send_response(msg, {'content': f"Identity with address `{address}` not found", 'ephemeral': True})
+            return
+        ev_msg = bot.build_rank_message(ident, rewards)
+        apply_ephemeral(msg, ev_msg)
+        if private:
+            ev_msg['ephemeral'] = True
+        sent_msg = await bot.send_response(msg, ev_msg)
 
     @disnake.ui.button(label="Show more", style=disnake.ButtonStyle.secondary, custom_id="show_more")
     async def show_more(self, button: disnake.ui.Button, msg: disnake.MessageInteraction):
@@ -663,11 +1027,13 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
         await bot.tracker.check_cex_events()
         await bot.send_response(msg, {'content': 'Ok', 'ephemeral': True})
 
-    @xxdev.sub_command()
+    @xxdev.sub_command(options=[disnake.Option("keep_bot_state", description="Don't reset bot's state", required=False, type=disnake.OptionType.boolean)])
     @protect(roles=[], users=[DEV_USER])
-    async def reset_tracker(msg: disnake.CommandInteraction):
+    async def reset_tracker(msg: disnake.CommandInteraction, keep_bot_state: bool = False):
         "Reset tracker state and check for notifications"
         bot.tracker._reset_state()
+        if not keep_bot_state:
+            bot.reset_state()
         await bot.tracker.check_events()
         await bot.tracker.check_cex_events()
         await bot.send_response(msg, {'content': 'Ok', 'ephemeral': True})
@@ -682,18 +1048,29 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
                 continue
             await bot.tracker._emit_transfer_event(tx_hash, ev_type)
 
-    @xxdev.sub_command(options=[disnake.Option("tx_hashes", description="TX hashes, comma separated", required=True, type=disnake.OptionType.string), disnake.Option("ev_type", description="Event type", required=False, type=disnake.OptionType.string)])
+    @xxdev.sub_command(options=[disnake.Option("tx_hashes", description="TX hashes, comma separated", required=True, type=disnake.OptionType.string), disnake.Option("ev_type", description="Event type", required=False, type=disnake.OptionType.string), disnake.Option("chain", description="Chain", required=False, type=disnake.OptionType.string)])
     @protect(roles=[], users=[DEV_USER])
-    async def fetch_txs(msg: disnake.CommandInteraction, tx_hashes: str, ev_type: str = 'transfer'):
+    async def fetch_txs(msg: disnake.CommandInteraction, tx_hashes: str, ev_type: str = 'transfer', chain: str = 'bsc'):
         "Fetch TXes and show notifications for them, if possible"
         tx_hashes = tx_hashes.split(',')
         await bot.send_response(msg, {'content': 'Fetching...', 'ephemeral': True})
-        tfs = await bot.bsc_listener._fetch_txs(tx_hashes)
+        if chain == 'bsc':
+            tfs = await bot.bsc_listener._fetch_txs(tx_hashes)
+        elif chain == 'idena':
+            tfs = await bot.idena_listener._fetch_txs(tx_hashes)
+        else:
+            raise Exception(f"Unknown chain: {chain}")
         await db.insert_transfers(tfs)
         for tf in tfs:
-            e = {'type': ev_type, 'by': tf.signer, 'value': tf.meta.get('usd_value', 0),
-                 'tfs': [tf], 'time': tf.timeStamp}
-            bot.tracker.tracker_event_chan.put_nowait(e)
+            if ev_type == 'transfer':
+                ev_constructor = TransferEvent
+            elif ev_type == 'interesting_transfer':
+                ev_constructor = InterestingTransferEvent
+            elif ev_type == 'dex':
+                ev_constructor = DexEvent
+            ev = ev_constructor(time=tf.timeStamp, tfs=[tf])
+
+            bot.tracker.tracker_event_chan.put_nowait(ev)
 
     @xxdev.sub_command(options=[disnake.Option("event", description="Event in JSON", required=True, type=disnake.OptionType.string)])
     @protect(roles=[], users=[DEV_USER])
@@ -729,6 +1106,24 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
             except Exception as e:
                 log.error(f"Failed to delete message {message_id}: {e}", exc_info=True)
         await bot.send_response(msg, {'content': 'Ok', 'ephemeral': True})
+
+    @xxdev.sub_command()
+    @protect()
+    async def remove_buttons(msg: disnake.CommandInteraction, range: int=50):
+        "Remove buttons from missing messages"
+        await bot.send_response(msg, {'content': f'Removing buttons...', 'ephemeral': True})
+        cached_messages = set([ev_msg[1].id for ev_msg in bot.ev_to_msg.values() if ev_msg[1]])
+        log.debug(f"{cached_messages=}")
+        async for old_msg in msg.channel.history(limit=range):
+            if old_msg.author != disbot.user:
+                continue
+            if len(old_msg.components) > 0 and old_msg.id not in cached_messages:
+                try:
+                    await old_msg.edit(components=None)
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    log.error(f"Failed to edit message {old_msg.id}: {e}", exc_info=True)
+        log.debug("Finished removing buttons")
 
     @xxdev.sub_command(options=[disnake.Option("add", description="User or role to add to admins", required=False, type=disnake.OptionType.mentionable), disnake.Option("remove", description="User or role to remove from admins", required=False, type=disnake.OptionType.mentionable)])
     @protect(roles=[], users=[DEV_USER])
@@ -921,7 +1316,7 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
     async def delete_recent(msg: disnake.CommandInteraction, minutes: int = 1):
         "Delete messages sent in the last X minutes"
         await bot.send_response(msg, {'content': f'Deleting sent messages for the past `{minutes}` minutes', 'ephemeral': True})
-        async for del_msg in msg.channel.history(limit=200):
+        async for del_msg in msg.channel.history(limit=100):
             if del_msg.author != disbot.user:
                 continue
             if datetime.now(timezone.utc) - del_msg.created_at.replace(tzinfo=timezone.utc) < timedelta(minutes=minutes):
@@ -929,6 +1324,7 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
                     await del_msg.delete()
                 except Exception as e:
                     log.error(f"Failed to delete message {del_msg.id}: {e}", exc_info=True)
+        log.debug("Finished deleting recent")
 
     def apply_ephemeral(in_msg: disnake.CommandInteraction, out_msg: dict):
         if in_msg.guild is None:

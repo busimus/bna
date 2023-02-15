@@ -37,7 +37,7 @@ async def test_fetch_and_process_block():
         ]
     }
     log = init_logging()
-    os.environ['POSTGRES_CONNSTRING'] = 'postgresql://postgres:123@localhost:5432/bna_pytest'
+    os.environ['POSTGRES_CONNSTRING'] = 'postgresql://bna:bna@localhost:15432/bna_pytest'
     db = Database(log, f'/tmp/bna_pytest_conf_{int(time.time())}.json')
     db.prices['cg:idena'] = 1
     await db.connect(True)
@@ -117,7 +117,7 @@ async def test_process_tx():
                     "pool": "0xddddaddb856901ac3e2251b8234efeab2188b22a",
                     "usd_value": 1581.545067883599849852
                 },
-                tags=["kill"],
+                tags=["killDelegator"],
                 chain="idena",
                 signer="0xddddaddb856901ac3e2251b8234efeab2188b22a",
                 changes={
@@ -131,7 +131,7 @@ async def test_process_tx():
     ]
 
     log = init_logging()
-    os.environ['POSTGRES_CONNSTRING'] = 'postgresql://postgres:123@localhost:5432/bna_pytest'
+    os.environ['POSTGRES_CONNSTRING'] = 'postgresql://bna:bna@localhost:15432/bna_pytest'
     db = Database(log, f'/tmp/bna_pytest_conf_{int(time.time())}.json')
     await db.connect(True)
     conf = db.get_config()

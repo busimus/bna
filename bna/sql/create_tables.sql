@@ -57,3 +57,15 @@ CREATE TABLE IF NOT EXISTS public."Identities"
 )
 
 TABLESPACE pg_default;
+
+CREATE TABLE IF NOT EXISTS public."Events"
+(
+    id bigint NOT NULL,
+    channel bigint NOT NULL,
+    message bigint NOT NULL,
+    -- time timestamp with time zone NOT NULL,
+    event jsonb,
+    CONSTRAINT "Events_pkey" PRIMARY KEY (id)
+)
+
+TABLESPACE pg_default;

@@ -18,31 +18,32 @@ MARKET_BSC = "bsc"
 MARKETS = {
     MARKET_HOTBIT: {
         "name": "Hotbit",
-        "base": "cg:bitcoin",
+        "quote": "cg:bitcoin",
         "link": "[Hotbit](https://www.hotbit.io/exchange?symbol=IDNA_BTC)"
     },
     MARKET_BITMART: {
         "name": "BitMart",
-        "base": "cg:tether",
+        "quote": "cg:tether",
         "link": "[BitMart](https://www.bitmart.com/trade/en?layout=basic&symbol=IDNA_USDT)"
     },
     MARKET_BSC: {
         "name": "BSC",
+        "quote": "cg:tether",
         "link": "[BSC](https://app.1inch.io/#/56/unified/swap/0x0de08c1abe5fb86dd7fd2ac90400ace305138d5b/BUSD)",
     },
     MARKET_VITEX: {
         "name": "ViteX",
-        "base": "cg:bitcoin",
+        "quote": "cg:bitcoin",
         "link": "[ViteX](https://x.vite.net/trade?symbol=IDNA-000_BTC-000)"
     },
     MARKET_PROBIT: {
         "name": "ProBit",
-        "base": "cg:bitcoin",
+        "quote": "cg:bitcoin",
         "link": "[ProBit](https://www.probit.com/app/exchange/IDNA-BTC)"
     },
     MARKET_QTRADE: {
         "name": "qTrade",
-        "base": "cg:bitcoin",
+        "quote": "cg:bitcoin",
         "link": "[qTrade](https://qtrade.io/market/IDNA_BTC)"
     },
 }
@@ -55,21 +56,21 @@ class Trade:
     amount: Decimal
     price: Decimal
     usd_value: float
-    base: str
+    quote: str
     buy: bool
 
-    def from_hotbit(trade, base_price: float):
+    def from_hotbit(trade, quote_price: float):
         trade['amount'] = Decimal(trade['amount'])
         trade['price'] = Decimal(trade['price'])
         trade['buy'] = trade['type'] == 'buy'
         trade['timeStamp'] = datetime.fromtimestamp(trade['time'], tz=timezone.utc)
         trade = {k: trade[k] for k in trade if k in Trade.__match_args__}
         trade['market'] = MARKET_HOTBIT
-        trade['base'] = MARKETS[MARKET_HOTBIT]['base']
-        trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(base_price))
+        trade['quote'] = MARKETS[MARKET_HOTBIT]['quote']
+        trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(quote_price))
         return Trade(**trade)
 
-    def from_bitmart(trade, base_price: float):
+    def from_bitmart(trade, quote_price: float):
         trade['id'] = int(trade['order_time'])  # shrug
         trade['amount'] = Decimal(trade['count'])
         trade['price'] = Decimal(trade['price'])
@@ -78,11 +79,11 @@ class Trade:
         trade['timeStamp'] = datetime.fromtimestamp(trade['order_time'] / 1000, tz=timezone.utc)
         trade = {k: trade[k] for k in trade if k in Trade.__match_args__}
         trade['market'] = MARKET_BITMART
-        trade['base'] = MARKETS[MARKET_BITMART]['base']
-        trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(base_price))
+        trade['quote'] = MARKETS[MARKET_BITMART]['quote']
+        trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(quote_price))
         return Trade(**trade)
 
-    def from_vitex(trade, base_price: float):
+    def from_vitex(trade, quote_price: float):
         trade['id'] = int(trade['timestamp'])  # shrug
         trade['amount'] = Decimal(trade['amount'])
         trade['price'] = Decimal(trade['price'])
@@ -91,11 +92,11 @@ class Trade:
         trade['timeStamp'] = datetime.fromtimestamp(trade['timestamp'] / 1000, tz=timezone.utc)
         trade = {k: trade[k] for k in trade if k in Trade.__match_args__}
         trade['market'] = MARKET_VITEX
-        trade['base'] = MARKETS[MARKET_VITEX]['base']
-        trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(base_price))
+        trade['quote'] = MARKETS[MARKET_VITEX]['quote']
+        trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(quote_price))
         return Trade(**trade)
 
-    def from_probit(trade, base_price: float):
+    def from_probit(trade, quote_price: float):
         trade['id'] = int(trade['id'].split(":")[1])
         trade['amount'] = Decimal(trade['quantity'])
         trade['price'] = Decimal(trade['price'])
@@ -103,23 +104,27 @@ class Trade:
         trade['timeStamp'] = datetime.strptime(trade['time'], '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
         trade = {k: trade[k] for k in trade if k in Trade.__match_args__}
         trade['market'] = MARKET_PROBIT
-        trade['base'] = MARKETS[MARKET_PROBIT]['base']
-        trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(base_price))
+        trade['quote'] = MARKETS[MARKET_PROBIT]['quote']
+        trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(quote_price))
         return Trade(**trade)
 
-    # def from_qtrade(trade, base_price: float):
+    # def from_qtrade(trade, quote_price: float):
     #     trade['amount'] = Decimal(trade['amount'])
     #     trade['price'] = Decimal(trade['price'])
     #     trade['timeStamp'] = int(datetime.datetime.strptime(trade['created_at'], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=datetime.timezone.utc).timestamp())
     #     trade['buy'] = trade['side'] == 'buy'
     #     trade = {k: trade[k] for k in trade if k in Trade.__match_args__}
     #     trade['market'] = MARKET_QTRADE
-    #     trade['base'] = MARKETS[MARKET_QTRADE]['base']
-    #     trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(base_price))
+    #     trade['quote'] = MARKETS[MARKET_QTRADE]['quote']
+    #     trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(quote_price))
     #     return Trade(**trade)
 
     def from_dict(d: dict):
         d = deepcopy(d)
+        if 'base' in d:
+            d['quote'] = d['base']
+            del d['base']
+        d['quote'] = d['quote']
         d['amount'] = Decimal(d['amount'])
         d['price'] = Decimal(d['price'])
         d['timeStamp'] = datetime.fromtimestamp(d['timeStamp'], tz=timezone.utc)
@@ -170,8 +175,8 @@ async def hotbit_trades(log, conf: CexConfig, prices: dict, event_chan):
             r = await s.get(f'https://api.hotbit.io/api/v1/market.deals?market=IDNA/BTC&limit=100&last_id={last_trade_id}')
             trades = (await r.json(content_type=None))['result']
             if trades and len(trades) > 0:
-                base_price = prices[MARKETS[MARKET_HOTBIT]['base']]
-                trades = list(map(lambda t: Trade.from_hotbit(t, base_price), trades))
+                quote_price = prices[MARKETS[MARKET_HOTBIT]['quote']]
+                trades = list(map(lambda t: Trade.from_hotbit(t, quote_price), trades))
                 event_chan.put_nowait(trades)
                 last_trade_id = trades[0].id
         except asyncio.CancelledError:
@@ -189,11 +194,12 @@ async def vitex_trades(log, conf: CexConfig, prices: dict, event_chan):
     last_trade_time = 0
     while True:
         try:
-            await asyncio.sleep(conf.interval + random.random())
+            await asyncio.sleep(conf.interval * 3 + random.random())
             r = await s.get('https://api.vitex.net/api/v2/trades?symbol=IDNA-000_BTC-000&limit=100')
+            assert r.status == 200
             raw_trades = (await r.json(content_type=None))['data']
-            base_price = prices[MARKETS[MARKET_VITEX]['base']]
-            trades = [Trade.from_vitex(t, base_price) for t in raw_trades if t['timestamp'] > last_trade_time]
+            quote_price = prices[MARKETS[MARKET_VITEX]['quote']]
+            trades = [Trade.from_vitex(t, quote_price) for t in raw_trades if t['timestamp'] > last_trade_time]
             if trades and len(trades) > 0:
                 event_chan.put_nowait(trades)
                 last_trade_time = raw_trades[0]['timestamp']
@@ -201,7 +207,7 @@ async def vitex_trades(log, conf: CexConfig, prices: dict, event_chan):
             log.debug("Cancelled")
             break
         except Exception as e:
-            log.error(f'ViteX exception: "{e}"', exc_info=True)
+            log.error(f'ViteX exception: "{e}"', exc_info=False)
             await asyncio.sleep(conf.interval)
     await s.close()
 
@@ -220,8 +226,8 @@ async def probit_trades(log, conf: CexConfig, prices: dict, event_chan):
             resp = await r.json(content_type=None)
             trades = resp['data']
             if trades and len(trades) > 0:
-                base_price = prices[MARKETS[MARKET_HOTBIT]['base']]
-                trades = list(map(lambda t: Trade.from_probit(t, base_price), trades))
+                quote_price = prices[MARKETS[MARKET_HOTBIT]['quote']]
+                trades = list(map(lambda t: Trade.from_probit(t, quote_price), trades))
                 event_chan.put_nowait(trades)
                 start_time = (trades[0].timeStamp.replace(tzinfo=None) + timedelta(microseconds=1000)).isoformat(timespec='milliseconds')
         except asyncio.CancelledError:
@@ -244,8 +250,8 @@ async def bitmart_trades(log, conf: CexConfig, prices: dict, event_chan):
             r = await s.get('https://api-cloud.bitmart.com/spot/v1/symbols/trades?symbol=IDNA_USDT')
             trades = (await r.json())['data']['trades']
             if trades and len(trades) > 0:
-                base_price = prices[MARKETS[MARKET_BITMART]['base']]
-                trades = list(map(lambda t: Trade.from_bitmart(t, base_price),
+                quote_price = prices[MARKETS[MARKET_BITMART]['quote']]
+                trades = list(map(lambda t: Trade.from_bitmart(t, quote_price),
                            filter(lambda t: t['order_time'] > last_trade_id, trades)))
                 if len(trades) == 0:
                     continue
@@ -271,8 +277,8 @@ async def bitmart_trades(log, conf: CexConfig, prices: dict, event_chan):
 #             r = await s.get(f'https://api.qtrade.io/v1/market/IDNA_BTC/trades?newer_than={last_trade_id}')
 #             trades = (await r.json())['data']['trades']
 #             if len(trades) > 0:
-#                 base_price = prices[MARKETS[MARKET_QTRADE]['base']]
-#                 trades = list(map(lambda t: Trade.from_qtrade(t, base_price), trades))
+#                 quote_price = prices[MARKETS[MARKET_QTRADE]['quote']]
+#                 trades = list(map(lambda t: Trade.from_qtrade(t, quote_price), trades))
 #                 event_chan.put_nowait(trades)
 #                 last_trade_id = trades[0].id
 #         except asyncio.CancelledError:

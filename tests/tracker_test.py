@@ -4,6 +4,7 @@ import asyncio
 import pytest
 from copy import deepcopy
 from decimal import Decimal
+from collections import defaultdict
 from asyncio import Queue as AsyncQueue
 from datetime import datetime, timezone, timedelta
 
@@ -11,29 +12,33 @@ from bna import init_logging
 from bna.discord_bot import Bot
 from bna.config import Config
 from bna.database import Database
+from bna.event import *
 from bna.tracker import Tracker
 from bna.transfer import Transfer
-from bna.cex_listeners import Trade
+from bna.cex_listeners import Trade, MARKETS
 
-tf_ev = lambda a, v, l: {'type': 'transfer', 'by': a, 'amount': v, '_tfs_len': l}
-ki_ev = lambda a, v: {'type': 'kill', 'addr': a, 'stake': v}
-po_ev = lambda a, v, g: {'type': 'mass_pool', 'subtype': 'kill', 'pool': a, 'stake': v, 'age': g}
-in_ev = lambda a, l: {'type': 'interesting_transfer', 'by': a, '_tfs_len': l}
+tf_ev = lambda a, v, l: {'_type': TransferEvent, 'by': a, 'amount': Decimal(v), '_tfs_len': l}
+ki_ev = lambda a, v: {'_type': KillEvent, 'killed': a, 'stake': v, 'amount': Decimal(v), 'by': a}
+po_ev = lambda a, v, g: {'_type': MassPoolEvent, 'subtype': 'kill', 'pool': a, 'stake': v, 'age': g}
+in_ev = lambda a, v, l: {'_type': InterestingTransferEvent, 'by': a, 'amount': v, '_tfs_len': l}
 
 def tr_ev(ms: list) -> dict | None:
     if not ms:
         return None
-    ev = {'type': 'cex_trade', 'markets': {}}
+    markets = {m_name: MarketStats(quote_currency=m['quote']) for (m_name, m) in MARKETS.items()}
 
     total_buy_val, total_sell_val = 0.0, 0.0
     for m in ms:
         print(m)
-        ev['markets'][m[0]] = {'buy': Decimal(m[1]), 'sell': Decimal(m[2]), 'buy_usd_value': float(m[3]), 'sell_usd_value': float(m[4]), 'avg_price': float(m[5])}
-        ev['markets'][m[0]]['name'] = m[0]
+        markets[m[0]].__dict__.update({
+            'buy': Decimal(m[1]), 'sell': Decimal(m[2]),
+            'buy_usd': float(m[3]), 'sell_usd': float(m[4]),
+            'avg_price_usd': float(m[5]), 'avg_price': "",
+            'quote_amount': Decimal(m[1] * float(m[5]) + m[2] * float(m[5]))})
         total_buy_val += m[3]
         total_sell_val += m[4]
-    ev['total_buy_val'] = total_buy_val
-    ev['total_sell_val'] = total_sell_val
+    markets = dict(filter(lambda m: m[1].volume_idna() > 0, markets.items()))
+    ev = CexEvent(total_buy_val=total_buy_val, total_sell_val=total_sell_val, markets=markets)
     return ev
 
 
@@ -127,9 +132,9 @@ interesting_cases = {
     # Case 0: Unintetersing tag
     [({'from': FND, 'to': '0x2', 'amount': '0', 'tags': ['invite']}, None)],
     # Case 1: Foundation
-    [({'from': FND, 'to': '0x2', 'amount': '1'}, in_ev(FND, 1))],
+    [({'from': FND, 'to': '0x2', 'amount': '1'}, in_ev(FND, 1, 1))],
     # Case 2: Premine
-    [({'from': PRM, 'to': '0x2', 'amount': '1000'}, in_ev(PRM, 1))],
+    [({'from': PRM, 'to': '0x2', 'amount': '1000'}, in_ev(PRM, 1000, 1))],
 ]}
 
 
@@ -153,12 +158,12 @@ kill_cases = {
      ({'from': '0x5', 'amount': '-20', 'meta': {'age': 8, 'pool': '0xD'}}, None),
      ({'from': '0x6', 'amount': '-30', 'meta': {'age': 9, 'pool': '0xD'}}, po_ev('0xD', 60, 24))],
     # Case 4: KillDelegatorTx
-    [({'from': '0xD', 'to': '0x1', 'amount': '-1', 'meta': {'age': 4, 'pool': '0xD'}}, None),
-     ({'from': '0xD', 'to': '0x2', 'amount': '-2', 'meta': {'age': 5, 'pool': '0xD'}}, None),
-     ({'from': '0xD', 'to': '0x3', 'amount': '-3', 'meta': {'age': 6, 'pool': '0xD'}}, po_ev('0xD', -6, 15)),
-     ({'from': '0xD', 'to': '0x4', 'amount': '-10', 'meta': {'age': 7, 'pool': '0xD'}}, None),
-     ({'from': '0xD', 'to': '0x5', 'amount': '-20', 'meta': {'age': 8, 'pool': '0xD'}}, None),
-     ({'from': '0xD', 'to': '0x6', 'amount': '-30', 'meta': {'age': 9, 'pool': '0xD'}}, po_ev('0xD', -60, 24))],
+    [({'from': '0xD', 'to': '0x1', 'amount': '-2', 'meta': {'age': 4, 'pool': '0xD'}}, None),
+     ({'from': '0xD', 'to': '0x2', 'amount': '-4', 'meta': {'age': 5, 'pool': '0xD'}}, None),
+     ({'from': '0xD', 'to': '0x3', 'amount': '-6', 'meta': {'age': 6, 'pool': '0xD'}}, po_ev('0xD', 12, 15)),
+     ({'from': '0xD', 'to': '0x4', 'amount': '-20', 'meta': {'age': 7, 'pool': '0xD'}}, None),
+     ({'from': '0xD', 'to': '0x5', 'amount': '-30', 'meta': {'age': 8, 'pool': '0xD'}}, None),
+     ({'from': '0xD', 'to': '0x6', 'amount': '-40', 'meta': {'age': 9, 'pool': '0xD'}}, po_ev('0xD', 90, 24))],
 ]}
 
 for k in kill_cases['cases']:
@@ -171,7 +176,7 @@ for k in kill_cases['cases']:
             killed = step[0]['from']
         if 'meta' not in step[0]:
             step[0]['meta'] = {'age': 1, 'pool': None}
-        if step[1] is not None and step[1]['type'] == 'kill':
+        if step[1] is not None and step[1]['_type'] == KillEvent:
             step[1].update(step[0]['meta'])
         step[0]['meta']['killedIdentity'] = killed
 
@@ -181,17 +186,17 @@ trade_cases = {
            'majority_volume_fraction': 1},
 'cases': [
     # Case 0: Nothing
-    [({"price": "1", "amount": "10", "market": "bitmart", "base": "tether", "buy": True}, None)],
+    [({"price": "1", "amount": "10", "market": "bitmart", "quote": "tether", "buy": True}, None)],
     # Case 1: One large
-    [({"price": "1", "amount": "1000", "market": "bitmart", "base": "tether", "buy": True}, tr_ev([("bitmart", 1000, 0, 1000, 0, 1)]))],
+    [({"price": "1", "amount": "1000", "market": "bitmart", "quote": "tether", "buy": True}, tr_ev([("bitmart", 1000, 0, 1000, 0, 1)]))],
     # Case 2: Multiple small
-    [({"price": "1", "amount": "10", "market": "bitmart", "base": "tether", "buy": True}, None),
-     ({"price": "1", "amount": "75", "market": "bitmart", "base": "tether", "buy": False}, None),
-     ({"price": "1", "amount": "55", "market": "bitmart", "base": "tether", "buy": True}, tr_ev([("bitmart", 65, 75, 65, 75, 1)]))],
+    [({"price": "1", "amount": "10", "market": "bitmart", "quote": "tether", "buy": True}, None),
+     ({"price": "1", "amount": "75", "market": "bitmart", "quote": "tether", "buy": False}, None),
+     ({"price": "1", "amount": "55", "market": "bitmart", "quote": "tether", "buy": True}, tr_ev([("bitmart", 65, 75, 65, 75, 1)]))],
     # Case 3: Multiple CEXes
-    [({"price": "1", "amount": "10", "market": "hotbit", "base": "tether", "buy": True}, None),
-     ({"price": "1", "amount": "75", "market": "bitmart", "base": "tether", "buy": False}, None),
-     ({"price": "1", "amount": "55", "market": "bitmart", "base": "tether", "buy": True}, tr_ev([("hotbit", 10, 0, 10, 0, 1), ("bitmart", 55, 75, 55, 75, 1)]))],
+    [({"price": "1", "amount": "10", "market": "hotbit", "quote": "tether", "buy": True}, None),
+     ({"price": "1", "amount": "75", "market": "bitmart", "quote": "tether", "buy": False}, None),
+     ({"price": "1", "amount": "55", "market": "bitmart", "quote": "tether", "buy": True}, tr_ev([("hotbit", 10, 0, 10, 0, 1), ("bitmart", 55, 75, 55, 75, 1)]))],
 ]}
 
 def get_default_config():
@@ -204,7 +209,7 @@ def get_default_config():
 async def get_test_env():
     log = init_logging()
     events = AsyncQueue()
-    os.environ['POSTGRES_CONNSTRING'] = 'postgresql://postgres:123@localhost:5432/bna_pytest'
+    os.environ['POSTGRES_CONNSTRING'] = 'postgresql://bna:bna@localhost:15432/bna_pytest'
     os.environ['DEV_USER_ID'] = '0'
     db = Database(log, f'/tmp/bna_pytest_conf_{int(time.time())}.json')
     await db.connect(True)
@@ -293,12 +298,14 @@ def compare_transfer_event(chan: AsyncQueue, expected_event: dict | None) -> dic
     try:
         full_ev = chan.get_nowait()
         cmp_ev = deepcopy(full_ev)
+        assert type(cmp_ev) == expected_event['_type']
+        del expected_event['_type']
         if expected_event and expected_event.get('_tfs_len'):
-            assert len(cmp_ev['tfs']) == expected_event['_tfs_len']
+            assert len(cmp_ev.tfs) == expected_event['_tfs_len']
             del expected_event['_tfs_len']
-        for item in ['time', 'hash', 'tf', 'tfs', 'kills', 'count']:
+        for item in ['id', 'time', 'hash', 'tfs', 'changes', 'kills', 'count', '_recv']:
             try:
-                del cmp_ev[item]
+                del cmp_ev.__dict__[item]
             except:
                 pass
     except asyncio.queues.QueueEmpty:
@@ -307,7 +314,10 @@ def compare_transfer_event(chan: AsyncQueue, expected_event: dict | None) -> dic
         print('exception: ', e)
         raise e
 
-    assert cmp_ev == expected_event
+    if cmp_ev is not None:
+        assert cmp_ev.__dict__ == expected_event
+    else:
+        assert cmp_ev == expected_event
     return full_ev
 
 @pytest.mark.asyncio
@@ -376,9 +386,13 @@ def compare_trade_event(chan: AsyncQueue, expected_event: dict | None) -> dict |
         full_ev = chan.get_nowait()
         cmp_ev = deepcopy(full_ev)
         print('got_ev=', cmp_ev)
-        for item in ['time', 'hash', 'tf', 'tfs', 'kills', 'count']:
+        for item in ['id']:
             try:
-                del cmp_ev[item]
+                del cmp_ev.__dict__[item]
+            except:
+                pass
+            try:
+                del expected_event.__dict__[item]
             except:
                 pass
     except asyncio.queues.QueueEmpty:

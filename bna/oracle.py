@@ -41,7 +41,7 @@ class Oracle:
                 break
             except Exception as e:
                 self.log.error(f'Oracle refresh exception: "{e}"', exc_info=True)
-                await asyncio.sleep(REFRESH_PERIOD + random.random() * 2)
+                await asyncio.sleep(REFRESH_PERIOD / 2)
         await s.close()
 
     async def run_dexscreener(self, db: Database, watch: str):
@@ -60,5 +60,5 @@ class Oracle:
                 break
             except Exception as e:
                 self.log.error(f'Oracle refresh exception: "{e}"', exc_info=True)
-                await asyncio.sleep(REFRESH_PERIOD + random.random() * 2)
+                await asyncio.sleep(REFRESH_PERIOD / 2)
         await s.close()

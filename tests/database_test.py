@@ -2,6 +2,7 @@ import os
 import json
 import time
 import pytest
+import random
 from datetime import datetime, timezone
 from bna import init_logging
 from bna.database import Database
@@ -11,7 +12,7 @@ from bna.cex_listeners import Trade
 @pytest.mark.asyncio
 async def test_database():
     log = init_logging()
-    os.environ['POSTGRES_CONNSTRING'] = 'postgresql://postgres:123@localhost:5432/bna_pytest'
+    os.environ['POSTGRES_CONNSTRING'] = 'postgresql://bna:bna@localhost:15432/bna_pytest'
     db = Database(log, f'/tmp/bna_pytest_conf_{int(time.time())}.json')
     await db.connect(drop_existing=True)
     tests = json.load(open("tests/db_test_items.json"))
@@ -22,6 +23,28 @@ async def test_database():
 
     tfs = await db.recent_transfers(9999999999)
     assert list(map(lambda tf: tf.to_dict(), tfs)) == transfers
+
+    tf = await db.get_transfer(transfers[0]['hash'])
+    assert tf.to_dict() == transfers[0]
+    assert tf == Transfer.from_dict(transfers[0])
+
+    hashes = [tf['hash'] for tf in transfers]
+    hashes.insert(0, '0xBAD')
+    tfs = await db.get_transfers(hashes)
+    assert tfs[0] is None
+    for i, tf in enumerate(tfs[1:]):
+        assert tf.to_dict() == transfers[i]
+        assert tf == Transfer.from_dict(transfers[i])
+
+    shuffled_transfers = transfers.copy()
+    random.shuffle(shuffled_transfers)
+    shuffled_transfers = shuffled_transfers[:len(shuffled_transfers)//2]
+    shuffled_hashes = [tf['hash'] for tf in shuffled_transfers]
+    tfs = await db.get_transfers(shuffled_hashes)
+    for i, tf in enumerate(tfs):
+        assert tf == Transfer.from_dict(shuffled_transfers[i])
+        assert tf.to_dict() == shuffled_transfers[i]
+
 
     trs = await db.recent_trades(datetime.min.replace(tzinfo=timezone.utc), 9999999999)
     assert list(map(lambda tr: tr.to_dict(), trs)) == trades
