@@ -16,6 +16,7 @@ from bna.tags import *
 from bna.event import BlockEvent, ChainTransferEvent, ClubEvent
 from bna.transfer import CHAIN_IDENA, Transfer
 from bna.utils import calculate_usd_value
+from bna.models_pb2 import ProtoTransaction, ProtoCallContractAttachment
 
 RPC_API_TYPE_MAP = {
     'SendTx': "send",
@@ -50,6 +51,7 @@ USELESS_IDENT_FIELDS = ['code', 'flips', 'inviter', 'pubkey', 'invites', 'shardI
 
 MINING_STATES = {'Newbie', 'Verified', 'Human'}
 
+BNA_CONTRACT_ADDRESS = '0xa877f4632dff78f8b87f835379f844e260d0245d'
 
 class IdenaListener:
     def __init__(self, conf: IdenaConfig, log: Logger, db: Database):
@@ -304,15 +306,20 @@ class IdenaListener:
                 attempt += 1
                 await asyncio.sleep(2)
 
-    async def rpc_req(self, method=None, params = [], data=None, id=0):
+    async def rpc_req(self, method=None, params = [], data=None, id=0, error_ok=False):
         if data is None:
             data = json.dumps({"method": method,"params": params,"id": id, "key": self.rpc_key})
         resp = await self.rpc_session.post(self.rpc_url, data=data)
         # self.log.debug(f"{await resp.text()=}")
         j = await resp.json()
+        if error_ok:
+            return j
         if 'result' not in j:
             self.log.error(f"Bad RPC response: {j}")
-            raise Exception(f"RPC error")
+            if 'error' in j:
+                raise Exception(f"RPC error: {j['error']}")
+            else:
+                raise Exception("RPC error")
         return j['result']
 
     async def api_req(self, path, attempts=1):
@@ -566,6 +573,59 @@ class IdenaListener:
             tfs.append(await self.process_tx(tx, blockNumber=blockNumber, logIndex=index))
         return tfs
 
+    async def build_bna_airdrop_tx(self, address: str) -> str | None:
+        resp = await self.rpc_req('contract_readMap', [BNA_CONTRACT_ADDRESS, "c:", address, "bigint"], error_ok=True)
+        if 'result' in resp:
+            if Decimal(resp['result']) > Decimal(0):
+                return 'already claimed!'
+        elif resp.get('error', {}).get('message') == 'data is nil':
+            pass
+        else:
+            raise Exception(f"Unexpected response: {resp}")
+
+        eligible = ['Newbie', 'Verified', 'Human', 'Suspended', 'Zombie']
+        if address not in self.db.cache['identities'] or self.db.get_identity(address)['state'] not in eligible:
+            return 'not a valid identity!'
+
+        tx = ProtoTransaction()
+        tx.data.nonce = (await self.rpc_req('dna_getBalance', [address]))['mempoolNonce'] + 1
+        tx.data.epoch = (await self.rpc_req('dna_epoch'))['epoch']
+        tx.data.type = 16
+        tx.data.to = addr_to_bytes(BNA_CONTRACT_ADDRESS)
+        tx.data.maxFee = to_andy_bytes(Decimal(1))
+        payload = ProtoCallContractAttachment()
+        payload.method = "claimAirdrop"
+        tx.data.payload = payload.SerializeToString()
+        return tx.SerializeToString().hex()
+
+    async def build_bna_send_tx(self, from_address: str, to_address: str, amount: Decimal) -> str:
+        amount = to_andy_bytes(amount)
+        tx = ProtoTransaction()
+        tx.data.nonce = (await self.rpc_req('dna_getBalance', [from_address]))['mempoolNonce'] + 1
+        tx.data.epoch = (await self.rpc_req('dna_epoch'))['epoch']
+        tx.data.type = 16
+        tx.data.to = addr_to_bytes(BNA_CONTRACT_ADDRESS)
+        tx.data.maxFee = to_andy_bytes(Decimal(1))
+        payload = ProtoCallContractAttachment()
+        payload.method = "transfer"
+        payload.args.extend([addr_to_bytes(to_address), amount])
+        tx.data.payload = payload.SerializeToString()
+        return tx.SerializeToString().hex(), from_andy_bytes(amount)
+
+    async def get_bna_balance(self, address: str) -> Decimal:
+        resp = await self.rpc_req('contract_readMap', [BNA_CONTRACT_ADDRESS, "b:", address, "bigint"], error_ok=True)
+        if 'result' in resp:
+            return Decimal(resp['result']) / Decimal(10**18)
+        elif resp.get('error', {}).get('message') == 'data is nil':
+            return Decimal('0')
+        else:
+            raise Exception(f"Unexpected response: {resp}")
+
+    async def get_bna_supply(self) -> Decimal:
+        resp = await self.rpc_req('contract_readData', [BNA_CONTRACT_ADDRESS, "STATE", "string"])
+        state = json.loads(resp)
+        return Decimal(state['totalSupply']) / Decimal(10**18)
+
 def calculate_average(values: list[float], n: float):
     if len(values) == 0:
         return 0
@@ -580,3 +640,12 @@ def calculate_average(values: list[float], n: float):
         cnt += 1
 
     return total / cnt
+
+def addr_to_bytes(addr: str) -> bytes:
+    return bytes.fromhex(addr[2:])
+
+def to_andy_bytes(amount: Decimal) -> bytes:
+    return int(amount * (10**18)).to_bytes(16, 'big').lstrip(b'\x00')
+
+def from_andy_bytes(value: bytes) -> Decimal:
+    return Decimal(int.from_bytes(value, 'big')) / (10**18)

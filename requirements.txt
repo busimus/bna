@@ -13,6 +13,7 @@ iniconfig==2.0.0
 multidict==6.0.4
 packaging==22.0
 pluggy==1.0.0
+protobuf==4.22.0
 psycopg==3.0.18
 psycopg-binary==3.0.18
 pytest==7.2.0

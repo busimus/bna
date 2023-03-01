@@ -527,6 +527,24 @@ class Bot:
         comps = self.build_list_buttons(ev.id, 'top_seek', start_index, len(ev), LINES)
         return {'embed': em, 'components': comps}
 
+    async def build_bna_airdrop_message(self, address: str) -> dict:
+        raw_tx = await self.idena_listener.build_bna_airdrop_tx(address.lower())
+        if not raw_tx.startswith('0'):
+            return {'content': f'This address cannot claim the airdrop: {raw_tx}'}
+        tx_web_url = f"https://app.idena.io/dna/raw?tx={raw_tx}&callback_url=https%3A%2F%2Fdiscord.com%2Fchannels%2F634481767352369162%2F634497771457609759"
+        comps = [
+            disnake.ui.Button(label='Claim!', url=tx_web_url),
+        ]
+        return {'components': comps, 'ephemeral': True}
+
+    async def build_bna_send_message(self, from_address: str, to_address: str, amount: Decimal) -> dict:
+        raw_tx, amount = await self.idena_listener.build_bna_send_tx(from_address, to_address, amount)
+        tx_web_url = f"https://app.idena.io/dna/raw?tx={raw_tx}&callback_url=https%3A%2F%2Fdiscord.com%2Fchannels%2F634481767352369162%2F634497771457609759"
+        comps = [
+            disnake.ui.Button(label=f'Send {amount:f} BNA', url=tx_web_url),
+        ]
+        return {'components': comps, 'ephemeral': True}
+
     def build_list_buttons(self, ev_id, cmd: str, start_index: int, item_count: int, lines: int, last_index: int | None = None):
         back_disabled = start_index <= 0
         if last_index:
@@ -1008,11 +1026,72 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
             ev_msg['ephemeral'] = True
         sent_msg = await bot.send_response(msg, ev_msg)
 
-    @disnake.ui.button(label="Show more", style=disnake.ButtonStyle.secondary, custom_id="show_more")
-    async def show_more(self, button: disnake.ui.Button, msg: disnake.MessageInteraction):
-        log.info(f"Button: {button}")
-        log.info(f"Msg: {msg}")
-        await bot.send_response(msg, {'content': 'Ok', 'ephemeral': False})
+    @disbot.slash_command(dm_permission=False)
+    async def token(msg: disnake.CommandInteraction):
+        "BNA token"
+        pass
+
+    @token.sub_command(options=[disnake.Option("address", description="Your validated address", required=True, type=disnake.OptionType.string)], public=True)
+    async def airdrop(msg: disnake.CommandInteraction, address: str):
+        "Claim BNA tokens (only during epoch 103!)"
+        if not await bot.ratelimit(msg):
+            await bot.send_response(msg, {'content': 'Command execution not allowed', 'ephemeral': True})
+            return
+        if address and len(address) != 42 and address[:2] != '0x':
+            await bot.send_response(msg, {'content': 'Invalid address', 'ephemeral': True})
+            return
+        ev_msg = await bot.build_bna_airdrop_message(address)
+        ev_msg['ephemeral'] = True
+        sent_msg = await bot.send_response(msg, ev_msg)
+
+    @token.sub_command(options=[disnake.Option("address", description="Your validated address", required=True, type=disnake.OptionType.string)], public=True)
+    async def balance(msg: disnake.CommandInteraction, address: str):
+        "Get the BNA balance of an address"
+        if not await bot.ratelimit(msg):
+            await bot.send_response(msg, {'content': 'Command execution not allowed', 'ephemeral': True})
+            return
+        if address and len(address) != 42 and address[:2] != '0x':
+            await bot.send_response(msg, {'content': 'Invalid address', 'ephemeral': True})
+            return
+
+        # ev_msg = await bot.build_airdrop_message(tx_proof, address)
+        balance = await bot.idena_listener.get_bna_balance(address)
+        ev_msg = {'content': f'Balance of {bot.get_addr_text(address)}: **{balance:,f}** BNA'}
+        if balance < 0.1:
+            ev_msg['ephemeral'] = True
+        sent_msg = await bot.send_response(msg, ev_msg)
+
+    @token.sub_command(public=True)
+    async def supply(msg: disnake.CommandInteraction):
+        "Get the total supply of the BNA token"
+        if not await bot.ratelimit(msg):
+            await bot.send_response(msg, {'content': 'Command execution not allowed', 'ephemeral': True})
+            return
+
+        supply = await bot.idena_listener.get_bna_supply()
+        ev_msg = {'content': f'Total supply of the BNA token: **{supply:,f}** BNA'}
+        # ev_msg['ephemeral'] = True
+        sent_msg = await bot.send_response(msg, ev_msg)
+
+    @token.sub_command(options=[disnake.Option("from_address", description="Sending address", required=True, type=disnake.OptionType.string), disnake.Option("to_address", description="Destination address", required=True, type=disnake.OptionType.string), disnake.Option("amount", description="Amount of BNA tokens to send", required=True, type=disnake.OptionType.string)], public=True)
+    async def send(msg: disnake.CommandInteraction, from_address: str, to_address: str, amount: str):
+        "Send your BNA tokens to an address"
+        if not await bot.ratelimit(msg):
+            await bot.send_response(msg, {'content': 'Command execution not allowed', 'ephemeral': True})
+            return
+        if to_address and len(to_address) != 42 and to_address[:2] != '0x':
+            await bot.send_response(msg, {'content': 'Invalid address', 'ephemeral': True})
+            return
+
+        try:
+            dec_amount = Decimal(amount)
+        except Exception as e:
+            await bot.send_response(msg, {'content': 'Bad amount format', 'ephemeral': True})
+            return
+
+        ev_msg = await bot.build_bna_send_message(from_address, to_address, dec_amount)
+        ev_msg['ephemeral'] = True
+        sent_msg = await bot.send_response(msg, ev_msg)
 
     @disbot.slash_command(dm_permission=False)
     async def xxdev(msg: disnake.CommandInteraction):
