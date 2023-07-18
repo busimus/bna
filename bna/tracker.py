@@ -288,6 +288,7 @@ class Tracker:
                 if event_task:
                     trades: list[dict] | None = list(event_task)[0].result()
                     self.log.info(f"Got trades, {len(trades)=}")
+                    # self.log.debug(f"Got trades: {trades}")
                     await self.db.insert_trades(trades)
                     have_trades = True
 

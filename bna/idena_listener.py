@@ -45,9 +45,9 @@ RPC_API_TYPE_MAP = {
 }
 
 USELESS_IDENT_FIELDS = ['code', 'flips', 'inviter', 'pubkey', 'invites', 'shardId', 'invitees',
-                        'generation', 'profileHash', 'requiredFlips', 'availableFlips',
+                        'generation', 'profileHash', 'requiredFlips', 'madeFlips', 'availableFlips',
                         'penalty', 'penaltySeconds', 'flipKeyWordPairs', 'lastValidationFlags',
-                        'totalQualifiedFlips', 'totalShortFlipPoints']
+                        'totalQualifiedFlips', 'totalShortFlipPoints', 'flipsWithPair']
 
 MINING_STATES = {'Newbie', 'Verified', 'Human'}
 
@@ -267,6 +267,7 @@ class IdenaListener:
                 # TODO: try to parse the payload
                 tf = Transfer.from_idena_rpc(tx, blockNumber, logIndex, tags=[tx['type']])
                 tf.meta['call'] = {'contract': receipt['contract'].lower()}
+                # tf.meta['payload'] = tx.get('payload')
         else:
             pass
         if tf and tf.meta.get('usd_value') is None:
@@ -625,6 +626,11 @@ class IdenaListener:
         resp = await self.rpc_req('contract_readData', [BNA_CONTRACT_ADDRESS, "STATE", "string"])
         state = json.loads(resp)
         return Decimal(state['totalSupply']) / Decimal(10**18)
+
+    async def get_next_validation_time(self) -> int:
+        resp = await self.rpc_req("dna_epoch")
+        time = datetime.strptime(resp['nextValidation'], "%Y-%m-%dT%H:%M:%S%z")
+        return int(time.timestamp())
 
 def calculate_average(values: list[float], n: float):
     if len(values) == 0:

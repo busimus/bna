@@ -20,18 +20,12 @@ from bna.cex_listeners import Trade
 async def test_trade_parse():
     s = aiohttp.ClientSession()
     prices = {'cg:bitcoin': 17500, 'cg:idena': 0.02, 'cg:binancecoin': 270, 'cg:binance-usd': 1, 'cg:tether': 1}
-    # qts = await (await s.get("https://api.qtrade.io/v1/market/IDNA_BTC/trades")).json()
-    # for trade in qts['data']['trades']:
-    #     t = Trade.from_qtrade(trade, prices['bitcoin'])
     vxt = await (await s.get("https://api.vitex.net/api/v2/trades?symbol=IDNA-000_BTC-000&limit=100")).json(content_type=None)
     for trade in vxt['data']:
         t = Trade.from_vitex(trade, prices['cg:bitcoin'])
-    pbt = await (await s.get("https://api.probit.com/api/exchange/v1/trade?market_id=IDNA-BTC&start_time=2022-12-01T00:00:00.000Z&end_time=9999-12-21T03:00:00.000Z&limit=1000")).json(content_type=None)
+    pbt = await (await s.get("https://api.probit.com/api/exchange/v1/trade?market_id=IDNA-USDT&start_time=2023-07-17T16:31:23.087Z&end_time=9999-12-21T03:00:00.000Z&limit=1000")).json(content_type=None)
     for trade in pbt['data']:
         t = Trade.from_probit(trade, prices['cg:bitcoin'])
-    hts = await (await s.get("https://api.hotbit.io/api/v1/market.deals?market=IDNA/BTC&limit=100&last_id=0")).json(content_type=None)
-    for trade in hts['result']:
-        t = Trade.from_hotbit(trade, prices['cg:tether'])
     bts = await (await s.get("https://api-cloud.bitmart.com/spot/v1/symbols/trades?symbol=IDNA_USDT")).json()
     for trade in bts['data']['trades']:
         t = Trade.from_bitmart(trade, prices['cg:tether'])

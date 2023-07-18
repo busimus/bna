@@ -289,7 +289,7 @@ class Bot:
             self.log.error(f"Failed to describe tfs: {exc}", exc_info=True)
             tf_text = ''
             for i, tf in enumerate(tfs):
-                tf_text += f"\n{i+1}. {self.get_tx_text(tf)} ({int(tf.value())} iDNA)"
+                tf_text += f"\n{i+1}\. {self.get_tx_text(tf)} ({int(tf.value())} iDNA)"
                 if i >= 4 and len(tfs) > 5:
                     tf_text += f'\nAnd {len(tfs) - 5} others'
                     break
@@ -365,7 +365,7 @@ class Bot:
         changes = changes[start_index:]
         for i, pev in enumerate(changes):
             idents_text += '\n' if i != 0 else ''
-            idents_text += f"{i+1+start_index}. {self.get_addr_text(pev.addr, 'identity', short=False)}"
+            idents_text += f"{i+1+start_index}\. {self.get_addr_text(pev.addr, 'identity', short=False)}"
             idents_text += f" ({int(pev.stake):,} iDNA, age: {pev.age})"
             if i >= (lines - 1) and len(changes) > lines:
                 idents_text += f'\nAnd {len(changes) - lines:,} more'
@@ -381,7 +381,7 @@ class Bot:
             dtf = self.describe_tf(tf, ev_by=ev.by)
             tf_text += '\n' if i != 0 else ''
             price = f" _(at ${tf.meta.get('usd_price', 0):,.4f})_" if tf.meta.get('usd_price') is not None else ''
-            tf_text += f"{i+1+start_index}. {dtf['short']}{price}"
+            tf_text += f"{i+1+start_index}\. {dtf['short']}{price}"
             if i >= (lines - 1) and len(tfs) > lines:
                 tf_text += f'\nAnd {len(tfs) - lines:,} more'
                 break
@@ -405,7 +405,7 @@ class Bot:
                 if count == 0:
                     break
                 field_text += '\n' if i != 0 else ''
-                field_text += f"{i+start_index+1}. {self.get_addr_text(pool, 'pool', no_link=False, short_len=4, short=True)}: {count:,}"
+                field_text += f"{i+start_index+1}\. {self.get_addr_text(pool, 'pool', no_link=False, short_len=4, short=True)}: {count:,}"
                 if i == lines - 1 and len(page) > lines:
                     rest_sum = sum([p[1] for p in page[i+1:]])
                     field_text += f'\nAnd {len(page) - lines} others with {rest_sum:,} identitites'
@@ -490,21 +490,21 @@ class Bot:
             if type(ev) == TopKillEvent:
                 killed = self.get_addr_text(tf.meta['killedIdentity'], type_='identity', short_len=4)
                 stake = abs(list(tf.changes.values())[0])
-                tf_texts.append(f"{index}. {killed} ({stake:,.0f} iDNA, age: {tf.meta['age']})")
+                tf_texts.append(f"{index}\. {killed} ({stake:,.0f} iDNA, age: {tf.meta['age']})")
             elif type(ev) == TopStakeEvent:
                 addr = self.get_addr_text(item['signer'], type_='address')
-                tf_texts.append(f"{index}. {addr} ({item['stake']:,.0f} iDNA)")
+                tf_texts.append(f"{index}\. {addr} ({item['stake']:,.0f} iDNA)")
             elif type(ev) == TopDexEvent:
                 dtf = self.describe_tf(tf)
                 price = f" _(at ${tf.meta.get('usd_price', 0):,.4f})_" if tf.meta.get('usd_price') is not None else ''
-                tf_texts.append(f"{index}. {dtf['short']}{price}")
+                tf_texts.append(f"{index}\. {dtf['short']}{price}")
             elif type(ev) == TopEvent:
                 try:
                     dtf = self.describe_tf(tf)
                 except Exception as e:
                     self.log.error(f"{tf.hash}")
                     continue
-                tf_texts.append(f"{index}. {dtf['short']}")
+                tf_texts.append(f"{index}\. {dtf['short']}")
             total_len += len(tf_texts[-1])
             if total_len >= DESC_LIMIT - 500 or i == LINES - 1:  # some margin
                 didnt_fit = len(ev) - i
@@ -526,16 +526,6 @@ class Bot:
 
         comps = self.build_list_buttons(ev.id, 'top_seek', start_index, len(ev), LINES)
         return {'embed': em, 'components': comps}
-
-    async def build_bna_airdrop_message(self, address: str) -> dict:
-        raw_tx = await self.idena_listener.build_bna_airdrop_tx(address.lower())
-        if not raw_tx.startswith('0'):
-            return {'content': f'This address cannot claim the airdrop: {raw_tx}'}
-        tx_web_url = f"https://app.idena.io/dna/raw?tx={raw_tx}&callback_url=https%3A%2F%2Fdiscord.com%2Fchannels%2F634481767352369162%2F634497771457609759"
-        comps = [
-            disnake.ui.Button(label='Claim!', url=tx_web_url),
-        ]
-        return {'components': comps, 'ephemeral': True}
 
     async def build_bna_send_message(self, from_address: str, to_address: str, amount: Decimal) -> dict:
         raw_tx, amount = await self.idena_listener.build_bna_send_tx(from_address, to_address, amount)
@@ -581,6 +571,11 @@ class Bot:
                       'desc': f'Bridged **{tf.value():,.0f}** iDNA to BSC address {self.get_addr_text(tf.meta["bridge_to"], chain="bsc")}',
                       'short': self.get_tx_text(tf, f'Bridged to BSC: {shorten(tf.meta["bridge_to"])}'),
                       'color': Color.light_grey()})
+        elif IDENA_TAG_BRIDGE_BURN_WRONG in tf.tags:
+            d.update({'title': 'Incorrect bridge transfer to BSC lmaooooo <:palmkek:890578634123919390>',
+                      'desc': f'Bridged **{tf.value():,.0f}** iDNA to no particular BSC address <:kek:974061569698844702>',
+                      'short': self.get_tx_text(tf, f'Bridged incorrectly to BSC'),
+                      'color': Color.dark_orange()})
         elif IDENA_TAG_BRIDGE_MINT in tf.tags:
             d.update({'title': 'Bridge transfer from BSC',
                       'desc': f'Bridged **{tf.value():,.0f}** iDNA to Idena address {self.get_addr_text(tf.to(single=True), chain="idena")}',
@@ -1026,23 +1021,24 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
             ev_msg['ephemeral'] = True
         sent_msg = await bot.send_response(msg, ev_msg)
 
-    @disbot.slash_command(dm_permission=False)
-    async def token(msg: disnake.CommandInteraction):
-        "BNA token"
-        pass
-
-    @token.sub_command(options=[disnake.Option("address", description="Your validated address", required=True, type=disnake.OptionType.string)], public=True)
-    async def airdrop(msg: disnake.CommandInteraction, address: str):
-        "Claim BNA tokens (only during epoch 103!)"
+    @disbot.slash_command()
+    @protect(roles=command_roles, public=True)
+    async def wen(msg: disnake.CommandInteraction):
+        "Show time until the next validation"
         if not await bot.ratelimit(msg):
             await bot.send_response(msg, {'content': 'Command execution not allowed', 'ephemeral': True})
             return
-        if address and len(address) != 42 and address[:2] != '0x':
-            await bot.send_response(msg, {'content': 'Invalid address', 'ephemeral': True})
-            return
-        ev_msg = await bot.build_bna_airdrop_message(address)
-        ev_msg['ephemeral'] = True
-        sent_msg = await bot.send_response(msg, ev_msg)
+        time = await bot.idena_listener.get_next_validation_time()
+        desc = f"<t:{time}:R> (at <t:{time}:t> on <t:{time}:D>)"
+        we = Embed(color=Color.green(), title=f"Next validation is:", description=desc)
+        ev_msg = {'embeds': [we]}
+        apply_ephemeral(msg, ev_msg)
+        await bot.send_response(msg, ev_msg)
+
+    @disbot.slash_command(dm_permission=True, public=True)
+    async def token(msg: disnake.CommandInteraction):
+        "BNA token"
+        pass
 
     @token.sub_command(options=[disnake.Option("address", description="Your validated address", required=True, type=disnake.OptionType.string)], public=True)
     async def balance(msg: disnake.CommandInteraction, address: str):
@@ -1054,7 +1050,6 @@ def create_bot(db: Database, conf: Config, root_log: Logger):
             await bot.send_response(msg, {'content': 'Invalid address', 'ephemeral': True})
             return
 
-        # ev_msg = await bot.build_airdrop_message(tx_proof, address)
         balance = await bot.idena_listener.get_bna_balance(address)
         ev_msg = {'content': f'Balance of {bot.get_addr_text(address)}: **{balance:,f}** BNA'}
         if balance < 0.1:

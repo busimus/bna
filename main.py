@@ -12,7 +12,7 @@ from bna.discord_bot import Bot, create_bot
 from bna.bsc_listener import BscListener
 from bna.idena_listener import IdenaListener
 from bna.tracker import Tracker
-from bna.cex_listeners import hotbit_trades, bitmart_trades, probit_trades, vitex_trades
+from bna.cex_listeners import bitmart_trades, probit_trades, vitex_trades
 from bna.oracle import Oracle
 
 # TODO:
@@ -51,7 +51,6 @@ async def main(db: Database, bot: Bot, conf: Config, log: Logger):
         tracker_event_chan = AsyncQueue()
         cex_log = log.getChild("CX")
         if not passive:
-            asyncio.create_task(hotbit_trades(cex_log, conf.cex, db.prices, trade_event_chan), name="hotbit_trades")
             asyncio.create_task(bitmart_trades(cex_log, conf.cex, db.prices, trade_event_chan), name="bitmart_trades")
             asyncio.create_task(probit_trades(cex_log, conf.cex, db.prices, trade_event_chan), name="probit_trades")
             asyncio.create_task(vitex_trades(cex_log, conf.cex, db.prices, trade_event_chan), name="vitex_trades")

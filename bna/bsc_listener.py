@@ -124,9 +124,12 @@ class BscListener:
                         continue
                     num = block[0].blockNumber
                     block_time = await self.get_block_time(num)
+                    self.log.debug(f"Block {num} time: {block_time}, now: {time.time():.1f}")
                     if not block_time or time.time() < block_time + self.conf.transfer_delay:
                         self.log.debug(f"Block {num} is early: {block_time}")
                         continue
+                    await asyncio.sleep(2)  # load-bearing sleep for when a block is late and logs are disjunct
+                    block = list(self.logs[num].values())
                     self.log.info(f"Processing block {num}, ts={block_time}, {len(block)=}, {block}")
                     tfs = self.process_block(block)
                     self.logs.popitem(0)
@@ -188,7 +191,10 @@ class BscListener:
         diff = num - self.last_block
         if diff > 1 and self.last_block != 0:
             self.log.warning(f"Block {num} has {diff=}, fetching potentially missing logs")
-            await self.fetch_missing(from_=self.last_block, until=num)
+            try:
+                await self.fetch_missing(from_=self.last_block, until=num)
+            except Exception as e:
+                self.log.error(f"Error while fetching missing, giving up: {e}", exc_info=True)
             self.log.info("Finished fetching missing")
         self.last_block = num
         event_chan.put_nowait(BlockEvent(chain=CHAIN_BSC, height=int(num)))
@@ -359,6 +365,10 @@ class BscListener:
         # I wrote this batching thing because I thought there was a limit of 10000 blocks per
         # request on QuickNode, but actually it's just 10000 blocks from the tip.
         url = self.history_rpc_url
+        diff = until - from_
+        if diff > 9999:
+            self.log.warning("Can't fetch more than 10000 blocks in the past")
+            from_ = until - 9999
         for batch_from in range(from_, until, batch):
             batch_until = (batch_from + batch) if (until - (batch_from + batch)) > batch else until
             self.log.debug(f"Processing batch {batch_from}-{batch_until}")
@@ -428,7 +438,7 @@ class BscListener:
                 await asyncio.sleep(1)
         return signer
 
-    async def rpc_req(self, method, params, id=0, attempts=60, url=None) -> dict:
+    async def rpc_req(self, method, params, id=0, attempts=10, url=None) -> dict:
         if url is None:
             url = self.rpc_url
         self.log.debug(f"rpc_req {method=}, {params=} url={url[:30]}")

@@ -10,7 +10,7 @@ This is a Discord bot for the Idena project. Its main purpose is to show notific
         * Terminations of old identities or identities with large stake
         * Mass identity changes by pools (terminations, delegations, undelegations)
     * For large DEX volume on BSC (trades and liquidity changes)
-    * For large CEX volume (Hotbit, BitMart, ProBit, ViteX)
+    * For large CEX volume (BitMart, ProBit, ViteX)
     * For when an identity enters a "stake club" (like 100k stake club, etc.)
 * Commands:
     * For recent chain and market stats

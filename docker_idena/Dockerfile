@@ -1,6 +1,6 @@
 FROM debian:buster-slim
 
-ENV IDENA_VERSION 0.31.1
+ENV IDENA_VERSION 1.1.0
 
 WORKDIR /idena
 ADD idena-conf.json /idena

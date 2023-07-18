@@ -8,10 +8,12 @@ from disnake import Color
 
 from bna.transfer import Transfer
 from bna.utils import aggregate_dex_trades, trade_color
+from bna.tags import IDENA_TAG_KILL
 
 @dataclass(kw_only=True)
 class Event:
     id: int = -1
+    _color: Color = Color.from_rgb(129, 190, 238)
 
     def to_dict(self) -> dict:
         return {'type': 'event', 'id': self.id}
@@ -241,7 +243,10 @@ class PoolEvent(TransferEvent):
         pe = PoolEvent()
         pe.tfs = [tf]
         pe.time = tf.timeStamp
-        pe.addr = tf.signer
+        if subtype == IDENA_TAG_KILL:
+            pe.addr = tf.meta['killedIdentity']
+        else:
+            pe.addr = tf.signer
         pe.by = tf.signer
         pe.subtype = subtype
         pe.stake = stake if stake else tf.value(True)

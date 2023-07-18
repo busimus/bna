@@ -14,6 +14,7 @@ MARKET_HOTBIT = "hotbit"
 MARKET_BITMART = "bitmart"
 MARKET_VITEX = "vitex"
 MARKET_PROBIT = "probit"
+MARKET_PROBIT_USDT = "probit_usdt"
 MARKET_BSC = "bsc"
 MARKETS = {
     MARKET_HOTBIT: {
@@ -37,9 +38,14 @@ MARKETS = {
         "link": "[ViteX](https://x.vite.net/trade?symbol=IDNA-000_BTC-000)"
     },
     MARKET_PROBIT: {
-        "name": "ProBit",
+        "name": "ProBit BTC",
         "quote": "cg:bitcoin",
-        "link": "[ProBit](https://www.probit.com/app/exchange/IDNA-BTC)"
+        "link": "[ProBit BTC](https://www.probit.com/app/exchange/IDNA-BTC)"
+    },
+    MARKET_PROBIT_USDT: {
+        "name": "ProBit",
+        "quote": "cg:tether",
+        "link": "[ProBit](https://www.probit.com/app/exchange/IDNA-USDT)"
     },
     MARKET_QTRADE: {
         "name": "qTrade",
@@ -58,17 +64,6 @@ class Trade:
     usd_value: float
     quote: str
     buy: bool
-
-    def from_hotbit(trade, quote_price: float):
-        trade['amount'] = Decimal(trade['amount'])
-        trade['price'] = Decimal(trade['price'])
-        trade['buy'] = trade['type'] == 'buy'
-        trade['timeStamp'] = datetime.fromtimestamp(trade['time'], tz=timezone.utc)
-        trade = {k: trade[k] for k in trade if k in Trade.__match_args__}
-        trade['market'] = MARKET_HOTBIT
-        trade['quote'] = MARKETS[MARKET_HOTBIT]['quote']
-        trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(quote_price))
-        return Trade(**trade)
 
     def from_bitmart(trade, quote_price: float):
         trade['id'] = int(trade['order_time'])  # shrug
@@ -96,28 +91,17 @@ class Trade:
         trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(quote_price))
         return Trade(**trade)
 
-    def from_probit(trade, quote_price: float):
+    def from_probit(trade, quote_price: float, market: str = MARKET_PROBIT):
         trade['id'] = int(trade['id'].split(":")[1])
         trade['amount'] = Decimal(trade['quantity'])
         trade['price'] = Decimal(trade['price'])
         trade['buy'] = trade['side'] == 'buy'
         trade['timeStamp'] = datetime.strptime(trade['time'], '%Y-%m-%dT%H:%M:%S.%fZ').replace(tzinfo=timezone.utc)
         trade = {k: trade[k] for k in trade if k in Trade.__match_args__}
-        trade['market'] = MARKET_PROBIT
-        trade['quote'] = MARKETS[MARKET_PROBIT]['quote']
+        trade['market'] = market
+        trade['quote'] = MARKETS[market]['quote']
         trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(quote_price))
         return Trade(**trade)
-
-    # def from_qtrade(trade, quote_price: float):
-    #     trade['amount'] = Decimal(trade['amount'])
-    #     trade['price'] = Decimal(trade['price'])
-    #     trade['timeStamp'] = int(datetime.datetime.strptime(trade['created_at'], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=datetime.timezone.utc).timestamp())
-    #     trade['buy'] = trade['side'] == 'buy'
-    #     trade = {k: trade[k] for k in trade if k in Trade.__match_args__}
-    #     trade['market'] = MARKET_QTRADE
-    #     trade['quote'] = MARKETS[MARKET_QTRADE]['quote']
-    #     trade['usd_value'] = float(trade['amount'] * trade['price'] * Decimal(quote_price))
-    #     return Trade(**trade)
 
     def from_dict(d: dict):
         d = deepcopy(d)
@@ -139,11 +123,6 @@ class Trade:
         d['timeStamp'] = d['timeStamp'].timestamp()
         return d
 
-# Hotbit trades result:
-# {"error":null,"result":[
-#   {"id":5143035131,"time":1658497520,"price":"0.00000151","amount":"742.76","type":"buy"},
-#   {"id":5143033788,"time":1658497483,"price":"0.00000154","amount":"726.88","type":"sell"}]}
-
 # BitMart trades result:
 # {"message":"OK","code":1000,"trace":"7cfd180a-357b-406c-98cb-30ac9ac3b7b8","data":{"trades":[
 #   {"amount":"32.505743","order_time":1658497856533,"price":"0.035307","count":"920.66","type":"buy"},
@@ -156,36 +135,6 @@ class Trade:
 # {"data": [{"id": "IDNA-BTC:319985", "price": "0.0000007077", "quantity": "961.2376",
 #            "time": "2023-01-03T14:16:43.908Z", "side": "buy", "tick_direction": "down"}]}
 
-# qTrade trades result:
-# {"data":{"trades": [
-#   {"id":497652,"amount":"50","price":"0.00000206","base_volume":"0.000103","seller_taker":true,
-#    "side":"sell","created_at":"2022-01-27T12:01:24.177168Z","created_at_ts":1643284884177168},
-#   {"id":497222,"amount":"100","price":"0.00000224","base_volume":"0.000224","seller_taker":false,
-#    "side":"buy","created_at":"2022-01-24T11:58:39.879154Z","created_at_ts":1643025519879154}]}
-
-
-async def hotbit_trades(log, conf: CexConfig, prices: dict, event_chan):
-    log = log.getChild('HT')
-    log.info('Hotbit trade listener started')
-    s = aiohttp.ClientSession(headers={"Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=10))
-    last_trade_id = 1
-    while True:
-        try:
-            await asyncio.sleep(conf.interval + random.random())
-            r = await s.get(f'https://api.hotbit.io/api/v1/market.deals?market=IDNA/BTC&limit=100&last_id={last_trade_id}')
-            trades = (await r.json(content_type=None))['result']
-            if trades and len(trades) > 0:
-                quote_price = prices[MARKETS[MARKET_HOTBIT]['quote']]
-                trades = list(map(lambda t: Trade.from_hotbit(t, quote_price), trades))
-                event_chan.put_nowait(trades)
-                last_trade_id = trades[0].id
-        except asyncio.CancelledError:
-            log.debug("Cancelled")
-            break
-        except Exception as e:
-            log.error(f'Hotbit exception: "{e}"', exc_info=True)
-            await asyncio.sleep(conf.interval)
-    await s.close()
 
 async def vitex_trades(log, conf: CexConfig, prices: dict, event_chan):
     log = log.getChild('VX')
@@ -221,13 +170,13 @@ async def probit_trades(log, conf: CexConfig, prices: dict, event_chan):
     while True:
         try:
             await asyncio.sleep(conf.interval + random.random())
-            url = f'https://api.probit.com/api/exchange/v1/trade?market_id=IDNA-BTC&start_time={start_time}Z&end_time=9999-12-21T03:00:00.000Z&limit=1000'
+            url = f'https://api.probit.com/api/exchange/v1/trade?market_id=IDNA-USDT&start_time={start_time}Z&end_time=9999-12-21T03:00:00.000Z&limit=1000'
             r = await s.get(url)
             resp = await r.json(content_type=None)
             trades = resp['data']
             if trades and len(trades) > 0:
-                quote_price = prices[MARKETS[MARKET_HOTBIT]['quote']]
-                trades = list(map(lambda t: Trade.from_probit(t, quote_price), trades))
+                quote_price = prices[MARKETS[MARKET_PROBIT_USDT]['quote']]
+                trades = list(map(lambda t: Trade.from_probit(t, quote_price, MARKET_PROBIT_USDT), trades))
                 event_chan.put_nowait(trades)
                 start_time = (trades[0].timeStamp.replace(tzinfo=None) + timedelta(microseconds=1000)).isoformat(timespec='milliseconds')
         except asyncio.CancelledError:
@@ -264,27 +213,3 @@ async def bitmart_trades(log, conf: CexConfig, prices: dict, event_chan):
             log.error(f'BitMart exception: "{e}"', exc_info=True)
             await asyncio.sleep(conf.interval)
     await s.close()
-
-
-# async def qtrade_trades(log, conf: CexConfig, prices: dict, event_chan):
-#     log = log.getChild('QT')
-#     log.info('qTrade trade listener started')
-#     s = aiohttp.ClientSession(headers={"Content-Type": "application/json"}, timeout=aiohttp.ClientTimeout(total=10))
-#     last_trade_id = 1
-#     while True:
-#         try:
-#             await asyncio.sleep(conf.interval + random.random())
-#             r = await s.get(f'https://api.qtrade.io/v1/market/IDNA_BTC/trades?newer_than={last_trade_id}')
-#             trades = (await r.json())['data']['trades']
-#             if len(trades) > 0:
-#                 quote_price = prices[MARKETS[MARKET_QTRADE]['quote']]
-#                 trades = list(map(lambda t: Trade.from_qtrade(t, quote_price), trades))
-#                 event_chan.put_nowait(trades)
-#                 last_trade_id = trades[0].id
-#         except asyncio.CancelledError:
-#             log.debug("Cancelled")
-#             break
-#         except Exception as e:
-#             log.error(f'qTrade exception: "{e}"', exc_info=True)
-#             await asyncio.sleep(conf.interval)
-#     await s.close()
